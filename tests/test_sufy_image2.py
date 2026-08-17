@@ -1,6 +1,9 @@
 import importlib.util
 import base64
+import contextlib
+import io
 import json
+import os
 import struct
 import sys
 import tempfile
@@ -8,6 +11,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +71,14 @@ def start_mock_provider(state: MockProviderState):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+                return
+            if state.responses:
+                status, content_type, response_body = state.responses.pop(0)
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(response_body)))
+                self.end_headers()
+                self.wfile.write(response_body)
                 return
             self.send_response(404)
             self.end_headers()
@@ -245,6 +257,140 @@ class ProviderContractTests(unittest.TestCase):
         with self.assertRaises(module.SkillError) as raised:
             self.client().generate("fail", "1024x1024", self.output_dir)
         self.assertNotIn("test-secret-key", str(raised.exception))
+
+
+class CliTests(unittest.TestCase):
+    def setUp(self):
+        self.state = MockProviderState()
+        self.server, self.thread = start_mock_provider(self.state)
+        self.base_url = f"http://127.0.0.1:{self.server.server_port}/v1"
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.directory = Path(self.temporary_directory.name)
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+        self.temporary_directory.cleanup()
+
+    def queue_image(self, count=1):
+        for _index in range(count):
+            body = json.dumps({"data": [{"b64_json": PNG_BASE64}]}).encode("utf-8")
+            self.state.responses.append((200, "application/json", body))
+
+    def invoke(self, arguments, stdin=""):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        environment = {"LTS4AI_API_KEY": "cli-secret"}
+        with (
+            mock.patch.dict(os.environ, environment, clear=False),
+            mock.patch("sys.stdin", io.StringIO(stdin)),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            status = module.main(arguments)
+        return status, stdout.getvalue(), stderr.getvalue()
+
+    def common_arguments(self):
+        return [
+            "--base-url", self.base_url,
+            "--output-dir", str(self.directory / "outputs"),
+            "--retries", "0",
+        ]
+
+    def test_api_key_resolution_prefers_environment_and_supports_stdin(self):
+        with mock.patch.dict(os.environ, {"LTS4AI_API_KEY": "environment-secret"}):
+            self.assertEqual(module.resolve_api_key(False), "environment-secret")
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch("sys.stdin", io.StringIO("stdin-secret\n")),
+        ):
+            self.assertEqual(module.resolve_api_key(True), "stdin-secret")
+
+    def test_empty_stdin_key_is_rejected(self):
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch("sys.stdin", io.StringIO("\n")),
+        ):
+            with self.assertRaisesRegex(module.SkillError, "API key"):
+                module.resolve_api_key(True)
+
+    def test_parser_never_accepts_command_line_api_key(self):
+        parser = module.build_parser()
+        option_strings = {
+            option
+            for action in parser._actions
+            for option in action.option_strings
+        }
+        for action in parser._subparsers._group_actions[0].choices.values():
+            option_strings.update(
+                option
+                for sub_action in action._actions
+                for option in sub_action.option_strings
+            )
+        self.assertNotIn("--api-key", option_strings)
+        self.assertIn("--api-key-stdin", option_strings)
+
+    def test_generate_command_writes_image_and_json_summary(self):
+        self.queue_image()
+        arguments = ["generate", "--prompt", "draw tea", *self.common_arguments()]
+        status, stdout, stderr = self.invoke(arguments)
+        summary = json.loads(stdout)
+        self.assertEqual(status, 0)
+        self.assertEqual(stderr, "")
+        self.assertEqual(summary["operation"], "generate")
+        self.assertEqual(len(summary["outputs"]), 1)
+        self.assertTrue(Path(summary["outputs"][0]["path"]).is_file())
+
+    def test_edit_command_accepts_multiple_images(self):
+        self.queue_image()
+        first = self.directory / "first.png"
+        second = self.directory / "second.png"
+        first.write_bytes(PNG_BYTES)
+        second.write_bytes(PNG_BYTES)
+        arguments = [
+            "edit", "--prompt", "polish product", "--image", str(first),
+            "--image", str(second), *self.common_arguments(),
+        ]
+        status, stdout, _stderr = self.invoke(arguments)
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(stdout)["operation"], "edit")
+        self.assertEqual(self.state.requests[0]["path"], "/v1/images/edits")
+
+    def test_models_command_lists_provider_models(self):
+        response = json.dumps({"data": [{"id": "SF-gpt-image-2"}, {"id": "other"}]}).encode()
+        self.state.responses.append((200, "application/json", response))
+        status, stdout, _stderr = self.invoke([
+            "models", "--base-url", self.base_url, "--retries", "0",
+        ])
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(stdout)["models"], ["other", "SF-gpt-image-2"])
+
+    def test_batch_repeats_prompt_with_bounded_concurrency_and_ordered_outputs(self):
+        self.queue_image(3)
+        arguments = [
+            "batch", "--prompt", "premium product", "--count", "3",
+            "--concurrency", "2", *self.common_arguments(),
+        ]
+        status, stdout, _stderr = self.invoke(arguments)
+        outputs = json.loads(stdout)["outputs"]
+        self.assertEqual(status, 0)
+        self.assertEqual(len(outputs), 3)
+        self.assertEqual([item["index"] for item in outputs], [1, 2, 3])
+        self.assertEqual(len({item["path"] for item in outputs}), 3)
+        self.assertEqual(len(self.state.requests), 3)
+
+    def test_batch_reads_prompt_queue_and_rejects_more_than_ten(self):
+        prompts_file = self.directory / "prompts.txt"
+        prompts_file.write_text("\n".join(f"prompt {index}" for index in range(11)), encoding="utf-8")
+        arguments = [
+            "batch", "--prompts-file", str(prompts_file), *self.common_arguments(),
+        ]
+        status, stdout, stderr = self.invoke(arguments)
+        self.assertEqual(status, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("10", stderr)
+        self.assertNotIn("cli-secret", stderr)
 
 
 if __name__ == "__main__":

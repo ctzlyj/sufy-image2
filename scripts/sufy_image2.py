@@ -3,10 +3,15 @@
 
 from __future__ import annotations
 
+import argparse
 import base64
+import concurrent.futures
+import getpass
 import json
+import os
 import re
 import struct
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -305,7 +310,7 @@ class SfImage2Client:
             model_id = item.get("id") if isinstance(item, dict) else item
             if isinstance(model_id, str) and model_id.strip():
                 models.append(model_id.strip())
-        return sorted(set(models))
+        return sorted(set(models), key=str.casefold)
 
     def _request(
         self,
@@ -562,3 +567,215 @@ def _safe_network_reason(error: BaseException) -> str:
         reason = error.reason
         return str(reason)[:160] if reason else "network unavailable"
     return error.__class__.__name__
+
+
+def resolve_api_key(read_stdin: bool) -> str:
+    environment_key = os.environ.get("LTS4AI_API_KEY", "").strip()
+    if environment_key:
+        return environment_key
+    if read_stdin:
+        stdin_key = sys.stdin.readline().strip()
+        if stdin_key:
+            return stdin_key
+        raise SkillError("LTS4AI API key from stdin was empty.")
+    if sys.stdin.isatty():
+        interactive_key = getpass.getpass("LTS4AI API key: ").strip()
+        if interactive_key:
+            return interactive_key
+    raise SkillError(
+        "LTS4AI API key is required. Set LTS4AI_API_KEY or use --api-key-stdin."
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="sufy_image2.py",
+        description="Generate and edit images with LTS4AI SF-gpt-image-2.",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    common.add_argument("--model", default=DEFAULT_MODEL)
+    common.add_argument("--timeout", type=float, default=None)
+    common.add_argument("--retries", type=int, default=2)
+    common.add_argument(
+        "--api-key-stdin",
+        action="store_true",
+        help="Read the API key from one stdin line instead of a command argument.",
+    )
+
+    image_options = argparse.ArgumentParser(add_help=False, parents=[common])
+    image_options.add_argument(
+        "--ratio",
+        choices=["Adaptive", *FIXED_RATIOS.keys()],
+        default="1:1",
+    )
+    image_options.add_argument("--quality", choices=["1K", "2K", "4K"], default="2K")
+    image_options.add_argument(
+        "--resolution",
+        help="Expert override such as 2048x2048 or auto.",
+    )
+    image_options.add_argument("--output-dir", type=Path, default=Path("output"))
+
+    subparsers.add_parser("models", parents=[common], help="List available provider models.")
+
+    generate = subparsers.add_parser(
+        "generate",
+        parents=[image_options],
+        help="Generate one image from text.",
+    )
+    generate.add_argument("--prompt", required=True)
+
+    edit = subparsers.add_parser(
+        "edit",
+        parents=[image_options],
+        help="Edit an image using one to twelve references.",
+    )
+    edit.add_argument("--prompt", required=True)
+    edit.add_argument("--image", type=Path, action="append", required=True)
+
+    batch = subparsers.add_parser(
+        "batch",
+        parents=[image_options],
+        help="Run up to ten text or edit tasks.",
+    )
+    prompt_source = batch.add_mutually_exclusive_group(required=True)
+    prompt_source.add_argument("--prompt")
+    prompt_source.add_argument("--prompts-file", type=Path)
+    batch.add_argument("--count", type=int, default=1)
+    batch.add_argument("--concurrency", type=int, default=2)
+    batch.add_argument("--image", type=Path, action="append", default=[])
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    arguments = parser.parse_args(argv)
+    try:
+        api_key = resolve_api_key(arguments.api_key_stdin)
+        timeout = arguments.timeout
+        if timeout is None:
+            timeout = 1800 if getattr(arguments, "quality", "2K") == "4K" else 600
+        client = SfImage2Client(
+            api_key=api_key,
+            base_url=arguments.base_url,
+            model=arguments.model,
+            timeout=timeout,
+            retries=arguments.retries,
+        )
+        if arguments.command == "models":
+            _print_json({"ok": True, "operation": "models", "models": client.list_models()})
+            return 0
+        if arguments.command == "generate":
+            size = resolve_size(
+                arguments.ratio,
+                arguments.quality,
+                explicit_resolution=arguments.resolution,
+            )
+            output = client.generate(arguments.prompt, size, arguments.output_dir)
+            _print_json(_single_summary("generate", size, output))
+            return 0
+        if arguments.command == "edit":
+            references = validate_reference_images(arguments.image)
+            size = resolve_size(
+                arguments.ratio,
+                arguments.quality,
+                references[0].path,
+                arguments.resolution,
+            )
+            output = client.edit(arguments.prompt, references, size, arguments.output_dir)
+            _print_json(_single_summary("edit", size, output))
+            return 0
+        if arguments.command == "batch":
+            summary = run_batch(client, arguments)
+            _print_json(summary)
+            return 0
+        raise SkillError(f"Unsupported command: {arguments.command}")
+    except SkillError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+
+
+def run_batch(client: SfImage2Client, arguments: argparse.Namespace) -> dict[str, Any]:
+    prompts = _batch_prompts(arguments.prompt, arguments.prompts_file, arguments.count)
+    if not 1 <= arguments.concurrency <= 10:
+        raise SkillError("Batch concurrency must be between 1 and 10.")
+    references = validate_reference_images(arguments.image) if arguments.image else []
+    first_image = references[0].path if references else None
+    size = resolve_size(
+        arguments.ratio,
+        arguments.quality,
+        first_image,
+        arguments.resolution,
+    )
+    operation = "edit" if references else "generate"
+
+    def worker(item: tuple[int, str]) -> tuple[int, OutputImage]:
+        index, prompt = item
+        stem = f"{operation}-{index:03d}"
+        if references:
+            output = client.edit(prompt, references, size, arguments.output_dir, stem=stem)
+        else:
+            output = client.generate(prompt, size, arguments.output_dir, stem=stem)
+        return index, output
+
+    indexed_prompts = list(enumerate(prompts, start=1))
+    results: list[tuple[int, OutputImage]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(arguments.concurrency, len(prompts))) as executor:
+        futures = [executor.submit(worker, item) for item in indexed_prompts]
+        for future in futures:
+            results.append(future.result())
+    results.sort(key=lambda item: item[0])
+    return {
+        "ok": True,
+        "operation": "batch-edit" if references else "batch-generate",
+        "model": client.model,
+        "size": size,
+        "outputs": [
+            {"index": index, **_output_record(output)}
+            for index, output in results
+        ],
+    }
+
+
+def _batch_prompts(prompt: str | None, prompts_file: Path | None, count: int) -> list[str]:
+    if prompts_file is not None:
+        if not prompts_file.is_file():
+            raise SkillError(f"Prompts file does not exist: {prompts_file}")
+        prompts = [line.strip() for line in prompts_file.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+    else:
+        if count < 1:
+            raise SkillError("Batch count must be at least 1.")
+        prompts = [_require_prompt(prompt or "")] * count
+    if not prompts:
+        raise SkillError("The batch prompt list is empty.")
+    if len(prompts) > 10:
+        raise SkillError("A batch may contain at most 10 tasks.")
+    return prompts
+
+
+def _single_summary(operation: str, size: str, output: OutputImage) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "operation": operation,
+        "model": DEFAULT_MODEL,
+        "size": size,
+        "outputs": [{"index": 1, **_output_record(output)}],
+    }
+
+
+def _output_record(output: OutputImage) -> dict[str, Any]:
+    return {
+        "path": str(output.path),
+        "mimeType": output.mime_type,
+        "bytes": output.size,
+    }
+
+
+def _print_json(value: dict[str, Any]) -> None:
+    print(json.dumps(value, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
