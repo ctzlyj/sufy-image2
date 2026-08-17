@@ -239,6 +239,22 @@ class ProviderContractTests(unittest.TestCase):
         self.assertEqual(third.path.read_bytes(), PNG_BYTES)
         self.assertEqual(self.state.requests[-1]["path"], "/result.png")
 
+    def test_extracts_multiline_sse_data_event(self):
+        sse = (
+            'data: {"data": [\n'
+            f'data: {{"b64_json": "{PNG_BASE64}"}}]}}\n\n'
+            'data: [DONE]\n\n'
+        ).encode()
+        self.state.responses.append((200, "text/event-stream", sse))
+        result = self.client().generate("multiline", "1024x1024", self.output_dir)
+        self.assertEqual(result.path.read_bytes(), PNG_BYTES)
+
+    def test_rejects_base64_that_is_not_an_image(self):
+        invalid = base64.b64encode(b"plain text, not an image").decode("ascii")
+        self.queue_json({"data": [{"b64_json": invalid}]})
+        with self.assertRaisesRegex(module.SkillError, "valid image"):
+            self.client().generate("invalid", "1024x1024", self.output_dir)
+
     def test_retries_rate_limits_and_server_errors(self):
         self.queue_json({"error": {"message": "slow down"}}, status=429)
         self.queue_json({"error": {"message": "temporary"}}, status=503)
@@ -341,6 +357,16 @@ class CliTests(unittest.TestCase):
         self.assertEqual(summary["operation"], "generate")
         self.assertEqual(len(summary["outputs"]), 1)
         self.assertTrue(Path(summary["outputs"][0]["path"]).is_file())
+
+    def test_generate_summary_reports_selected_model(self):
+        self.queue_image()
+        arguments = [
+            "generate", "--prompt", "draw tea", "--model", "custom-image-model",
+            *self.common_arguments(),
+        ]
+        status, stdout, _stderr = self.invoke(arguments)
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(stdout)["model"], "custom-image-model")
 
     def test_edit_command_accepts_multiple_images(self):
         self.queue_image()

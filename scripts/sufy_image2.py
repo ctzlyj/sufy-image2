@@ -355,7 +355,9 @@ class SfImage2Client:
             payload = ImagePayload(data=data, mime_type=content_type)
         if payload.data is None:
             raise SkillError("Provider response did not contain image bytes.")
-        mime_type = payload.mime_type or detect_image_mime(payload.data)
+        mime_type = detect_image_mime(payload.data)
+        if mime_type is None:
+            raise SkillError("Provider response was not a valid image.")
         extension = extension_for_mime(mime_type)
         output_dir.mkdir(parents=True, exist_ok=True)
         destination = available_output_path(output_dir, sanitize_stem(stem), extension)
@@ -429,11 +431,12 @@ def extract_image_payload(response_body: bytes, content_type: str = "") -> Image
         try:
             payloads.append(json.loads(text))
         except json.JSONDecodeError:
-            for line in text.splitlines():
-                stripped = line.strip()
-                if not stripped.startswith("data:"):
-                    continue
-                data = stripped[5:].strip()
+            for block in re.split(r"\r?\n\r?\n", text):
+                data = "\n".join(
+                    line.strip()[5:].strip()
+                    for line in block.splitlines()
+                    if line.strip().startswith("data:")
+                ).strip()
                 if not data or data == "[DONE]":
                     continue
                 try:
@@ -498,10 +501,10 @@ def download_remote_image(url: str, timeout: float) -> tuple[bytes, str]:
         raise SkillError(f"Unable to download provider image: {_safe_network_reason(error)}") from None
     if not data:
         raise SkillError("Provider image URL returned an empty body.")
-    return data, content_type or detect_image_mime(data)
+    return data, content_type or detect_image_mime(data) or "application/octet-stream"
 
 
-def detect_image_mime(data: bytes) -> str:
+def detect_image_mime(data: bytes) -> str | None:
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"
     if data.startswith(b"\xff\xd8\xff"):
@@ -510,7 +513,7 @@ def detect_image_mime(data: bytes) -> str:
         return "image/gif"
     if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
-    return "image/png"
+    return None
 
 
 def extension_for_mime(mime_type: str) -> str:
@@ -674,7 +677,7 @@ def main(argv: list[str] | None = None) -> int:
                 explicit_resolution=arguments.resolution,
             )
             output = client.generate(arguments.prompt, size, arguments.output_dir)
-            _print_json(_single_summary("generate", size, output))
+            _print_json(_single_summary("generate", client.model, size, output))
             return 0
         if arguments.command == "edit":
             references = validate_reference_images(arguments.image)
@@ -685,7 +688,7 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.resolution,
             )
             output = client.edit(arguments.prompt, references, size, arguments.output_dir)
-            _print_json(_single_summary("edit", size, output))
+            _print_json(_single_summary("edit", client.model, size, output))
             return 0
         if arguments.command == "batch":
             summary = run_batch(client, arguments)
@@ -755,11 +758,11 @@ def _batch_prompts(prompt: str | None, prompts_file: Path | None, count: int) ->
     return prompts
 
 
-def _single_summary(operation: str, size: str, output: OutputImage) -> dict[str, Any]:
+def _single_summary(operation: str, model: str, size: str, output: OutputImage) -> dict[str, Any]:
     return {
         "ok": True,
         "operation": operation,
-        "model": DEFAULT_MODEL,
+        "model": model,
         "size": size,
         "outputs": [{"index": 1, **_output_record(output)}],
     }
