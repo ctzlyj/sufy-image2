@@ -393,5 +393,46 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("cli-secret", stderr)
 
 
+class DocumentationTests(unittest.TestCase):
+    def test_skill_metadata_and_workflow_are_complete(self):
+        skill_text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("name: sufy-image2", skill_text)
+        self.assertIn("description: Use when", skill_text)
+        self.assertIn("SF-gpt-image-2", skill_text)
+        self.assertIn("LTS4AI_API_KEY", skill_text)
+        self.assertIn("seed", skill_text.lower())
+        self.assertRegex(skill_text.lower(), r"render|display")
+
+    def test_references_document_exact_contract_and_key_safety(self):
+        contract = (ROOT / "references" / "api-contract.md").read_text(encoding="utf-8")
+        workflow = (ROOT / "references" / "agent-workflow.md").read_text(encoding="utf-8")
+        self.assertIn("/v1/images/generations", contract)
+        self.assertIn("/v1/images/edits", contract)
+        self.assertIn("multipart/form-data", contract)
+        self.assertIn("output_format", contract)
+        self.assertIn("LTS4AI_API_KEY", workflow)
+        self.assertIn("--api-key-stdin", workflow)
+        self.assertIn("Never", workflow)
+
+    def test_readme_has_installation_and_usage_without_real_secrets(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("安装", readme)
+        self.assertIn("generate", readme)
+        self.assertIn("edit", readme)
+        self.assertIn("batch", readme)
+        self.assertIn("MIT", readme)
+
+        public_files = [
+            ROOT / "SKILL.md",
+            ROOT / "README.md",
+            ROOT / "agents" / "openai.yaml",
+            ROOT / "references" / "api-contract.md",
+            ROOT / "references" / "agent-workflow.md",
+        ]
+        all_public_text = "\n".join(path.read_text(encoding="utf-8") for path in public_files)
+        self.assertNotRegex(all_public_text, r"sk-[A-Za-z0-9]{16,}")
+        self.assertNotRegex(all_public_text, r"gho_[A-Za-z0-9]+")
+
+
 if __name__ == "__main__":
     unittest.main()
