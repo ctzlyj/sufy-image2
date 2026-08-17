@@ -43,4 +43,3 @@ The CLI prints JSON containing absolute paths, MIME types, byte sizes, model, an
 - Missing image data: preserve the provider status and ask for a retry; do not invent an output.
 - Unsupported reference: convert AVIF/HEIC or other formats to PNG/JPEG before retrying.
 - More than 15 MB: reduce image count or compress references without changing the product identity.
-

@@ -55,4 +55,3 @@ Add `--api-key-stdin` after the subcommand when using stdin. Never put the key i
 
 - Read `references/api-contract.md` when diagnosing request shape, ratios, sizes, or response formats.
 - Read `references/agent-workflow.md` for secure invocation patterns and actionable error handling.
-

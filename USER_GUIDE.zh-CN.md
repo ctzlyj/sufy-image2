@@ -66,4 +66,3 @@ API Key 只应临时用于本次调用。请要求 Agent 不要把 Key 写入命
 - 如果提示 429，请检查额度或稍后降低并发重试。
 
 实际调用模型为 `SF-gpt-image-2`，默认 API 地址为 `https://api.lts4ai.com/v1`。
-

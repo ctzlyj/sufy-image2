@@ -86,4 +86,3 @@ The client also accepts nested `b64Json`, data URLs, SSE `data:` JSON frames, di
 - Default retries: two retries after the first attempt.
 - Retry only HTTP 429 and 5xx responses, with 1-second and 3-second waits.
 - A seed is not included in `SF-gpt-image-2` generation or edit requests.
-
