@@ -1,6 +1,6 @@
 ---
 name: sufy-image2
-description: Use when a user wants to generate, redraw, edit, restyle, or batch-create images with an LTS4AI API key and the SF-gpt-image-2 model, including text-to-image, multi-reference image-to-image, aspect-ratio selection, or 1K/2K/4K output.
+description: Use when a user wants to generate, redraw, edit, restyle, or batch-create images with an LTS4AI API key and the SF-gpt-image-2 model, including Image Studio 商品套图, 服装工作台换装与动作图, multi-reference image-to-image, aspect-ratio selection, or 1K/2K/4K output.
 ---
 
 # SUFY Image2
@@ -13,6 +13,7 @@ Use the bundled standard-library Python client to run the same LTS4AI `SF-gpt-im
    - no reference image → `generate`
    - one to twelve reference images → `edit`
    - several outputs or one prompt per line → `batch`
+   - 商品套图或服装工作台任务 → 先阅读 `references/image-studio-workflows.md`，再按其中的角色分工、参考图顺序和保真约束组织提示词
 2. Ask once for the LTS4AI API key only when the user has not supplied it.
 3. Keep the key ephemeral. Prefer a process-local `LTS4AI_API_KEY`; otherwise start the CLI with `--api-key-stdin` and send the key through stdin without shell echo.
 4. Infer missing creative details from the request. Default to ratio `1:1`, quality `2K`, and output directory `output/`.
@@ -55,3 +56,4 @@ Add `--api-key-stdin` after the subcommand when using stdin. Never put the key i
 
 - Read `references/api-contract.md` when diagnosing request shape, ratios, sizes, or response formats.
 - Read `references/agent-workflow.md` for secure invocation patterns and actionable error handling.
+- Read `references/image-studio-workflows.md` for Image Studio 商品套图、标准换装、直接动作、主图审核和动作轮次规则。

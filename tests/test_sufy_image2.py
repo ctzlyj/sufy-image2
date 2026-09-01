@@ -429,6 +429,20 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("seed", skill_text.lower())
         self.assertRegex(skill_text.lower(), r"render|display")
 
+    def test_image_studio_product_and_clothing_workflows_are_discoverable(self):
+        skill_text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        workflow_path = ROOT / "references" / "image-studio-workflows.md"
+
+        self.assertTrue(workflow_path.is_file())
+        workflow = workflow_path.read_text(encoding="utf-8")
+        self.assertIn("image-studio-workflows.md", skill_text)
+        self.assertIn("商品套图", skill_text)
+        self.assertIn("服装工作台", skill_text)
+        self.assertIn("商品套图", readme)
+        self.assertIn("服装工作台", readme)
+        self.assertGreater(len(workflow.strip()), 1000)
+
     def test_references_document_exact_contract_and_key_safety(self):
         contract = (ROOT / "references" / "api-contract.md").read_text(encoding="utf-8")
         workflow = (ROOT / "references" / "agent-workflow.md").read_text(encoding="utf-8")
@@ -454,6 +468,7 @@ class DocumentationTests(unittest.TestCase):
             ROOT / "agents" / "openai.yaml",
             ROOT / "references" / "api-contract.md",
             ROOT / "references" / "agent-workflow.md",
+            ROOT / "references" / "image-studio-workflows.md",
         ]
         all_public_text = "\n".join(path.read_text(encoding="utf-8") for path in public_files)
         self.assertNotRegex(all_public_text, r"sk-[A-Za-z0-9]{16,}")

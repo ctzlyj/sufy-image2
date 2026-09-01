@@ -9,6 +9,8 @@
 - 文生图：`generate`
 - 1–12 张参考图的图生图/重绘：`edit`
 - 最多 10 个任务的批量生成和提示词队列：`batch`
+- Image Studio 商品套图：主图、场景图、卖点图、白底图、认证图和四宫格图的职责与证据约束
+- Image Studio 服装工作台：标准换装、直接动作、主图审核、动作轮次和参考图顺序
 - Adaptive、1:1、16:9、21:9、4:3、3:2、5:4、2:1、3:4、2:3、4:5、9:16
 - 1K、2K、4K 尺寸映射
 - JSON、Base64、Data URL、SSE 和远程图片 URL 响应解析
@@ -44,6 +46,18 @@ git clone https://github.com/CTctikki/sufy-image2 ~/.codex/skills/sufy-image2
 ```text
 使用 sufy-image2，把这两张商品参考图做成 4:5 的高级电商场景图，保持包装文字和商品外观完全不变。
 ```
+
+商品套图或服装工作台任务可直接描述目标，例如：
+
+```text
+使用 sufy-image2，按 Image Studio 商品套图规则生成主图：围绕一个核心购买理由，使用主标题、副标题和最多两个真实证据标签。
+```
+
+```text
+使用 sufy-image2，按服装工作台的标准换装流程处理这些商品正反面图和人物模板图；先生成主图供我审核，不要自动继续动作图。
+```
+
+详细规则见 [`references/image-studio-workflows.md`](references/image-studio-workflows.md)。
 
 Agent 应通过临时环境变量或 stdin 使用 Key，不应把 Key 写进命令、文件、日志或回复。
 
