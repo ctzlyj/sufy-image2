@@ -1,9 +1,10 @@
-# LTS4AI SF-gpt-image-2 API Contract
+# LTS4AI Flare / Sunburst / Image2 API Contract
 
 ## Defaults
 
 - Base URL: `https://api.lts4ai.com/v1`
-- Model: `SF-gpt-image-2`
+- Default model: `SF-gpt-image-2.5-flare`
+- Selectable: `SF-gpt-image-2.5-sunburst`, `SF-gpt-image-2`; preserve exact user selection, never silently fall back
 - Authentication: `Authorization: Bearer <API key>`
 - Output format: PNG
 
@@ -13,14 +14,14 @@
 
 ```json
 {
-  "model": "SF-gpt-image-2",
+  "model": "SF-gpt-image-2.5-flare",
   "prompt": "A premium studio product photograph",
   "size": "1024x1024",
   "output_format": "png"
 }
 ```
 
-Do not send `n` or `response_format` for this model.
+All three models share this contract. Do not send `n`, `seed`, or `response_format`.
 
 ## Multi-reference Editing
 
@@ -28,7 +29,7 @@ Do not send `n` or `response_format` for this model.
 
 | Field | Value |
 |---|---|
-| `model` | `SF-gpt-image-2` |
+| `model` | Selected exact model ID, default `SF-gpt-image-2.5-flare` |
 | `prompt` | User prompt |
 | `size` | Resolved provider size |
 | `output_format` | `png` |
@@ -66,6 +67,19 @@ For 4K:
 
 For edits, Adaptive first infers the nearest listed ratio from the first reference image.
 
+## Custom canvas (all three models)
+
+The same custom-size support applies to Flare, Sunburst, and Image2. `--width-cm` / `--height-cm` compute an exact reduced aspect ratio, choose integer multiples of 16 pixels on both axes, and apply:
+
+- Aspect ratio from 1:3 to 3:1 inclusive.
+- Longest side <=3840; area from 655360 to 8294400 pixels inclusive.
+- Positive centimeters, up to 9 integer digits and 6 decimal places. No rounding to another ratio; reject an unrepresentable exact ratio.
+- Pixel targets: 1K=1048576, 2K=3145728, 4K=8294400, clamped to legal exact multiples. Existing fixed-ratio mappings above remain unchanged.
+- No combination with `--ratio` or `--resolution`. Direct `--resolution WIDTHxHEIGHT` uses the same pixel envelope; `auto` remains available. `canvas` computes offline before spending credits.
+- 120×40cm → 1728×576 (1K), 3072×1024 (2K), 3840×1280 (4K); 29.7×21cm → 3168×2240 (4K). These are examples, not an exhaustive supported list.
+- Append canvas instructions to the complete original prompt, preserving every user title, selling point, and background choice. The centimeters are not product dimensions or text to draw.
+- Top-level `size` is the requested provider size; `outputs[].width/height` report readable actual image dimensions. Centimeters do not set DPI, and no output is resized, cropped, or padded by this client.
+
 ## Responses
 
 Canonical response:
@@ -83,6 +97,8 @@ The client also accepts nested `b64Json`, data URLs, SSE `data:` JSON frames, di
 ## Reliability
 
 - Default timeout: 10 minutes for 1K/2K and 30 minutes for 4K.
-- Default retries: two retries after the first attempt.
-- Retry only HTTP 429 and 5xx responses, with 1-second and 3-second waits.
-- A seed is not included in `SF-gpt-image-2` generation or edit requests.
+- Default retry budget: two retries after the first attempt, with 1-second and 3-second waits.
+- Retry explicit HTTP 429, and 5xx only for read-only GET requests such as `/models`.
+- Image POST HTTP 408/409/5xx, network failures, and interrupted bodies have an unknown outcome. Do not automatically resubmit; reconcile results and charges first. Missing/invalid image data also does not trigger an automatic new generation.
+- In a failed batch, already completed output files remain on disk. Inspect them before selecting any retry; do not replay successful tasks or silently change models.
+- A seed is not included in any generation or edit request.

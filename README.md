@@ -1,8 +1,20 @@
 # SUFY Image2 Agent Skill
 
-把 `image.ctikki.com` 当前使用的 LTS4AI `SF-gpt-image-2` 生图能力封装成可安装的 Agent Skill。安装后，用户只需向 Agent 提供自己的 LTS4AI API Key，再用自然语言描述想生成或修改的图片。
+把 `image.ctikki.com` 使用的 LTS4AI 生图能力封装成可安装的 Agent Skill。安装后，用户只需向 Agent 提供自己的 LTS4AI API Key，再用自然语言描述想生成或修改的图片。
 
-> 公开名称是 SUFY Image2；实际调用模型 ID 为 `SF-gpt-image-2`，默认接口为 `https://api.lts4ai.com/v1`。
+> Skill 名称继续保留 SUFY Image2；默认模型更新为 `SF-gpt-image-2.5-flare`，可切换 Sunburst 或原 Image2。默认接口为 `https://api.lts4ai.com/v1`。
+
+## 如何选择生图模型
+
+| 模型 | 建议用途 | 完整模型 ID |
+|---|---|---|
+| Flare（默认） | 日常商品图、批量出图、快速试方案 | `SF-gpt-image-2.5-flare` |
+| Sunburst | 重要海报、商品精修、精准修改 | `SF-gpt-image-2.5-sunburst` |
+| Image2（原模型） | 延续原有方案 | `SF-gpt-image-2` |
+
+直接告诉 Agent“更换生图模型为 Sunburst”即可；CLI 用 `--model` 指定完整 ID。不会擅自替换用户指定的模型。以下是网站同款中文对比图，安装包内自带，无需打开英文说明：
+
+![如何选择生图模型](assets/image-model-comparison.png)
 
 ## 能力
 
@@ -13,8 +25,10 @@
 - Image Studio 服装工作台：标准换装、直接动作、主图审核、动作轮次和参考图顺序
 - Adaptive、1:1、16:9、21:9、4:3、3:2、5:4、2:1、3:4、2:3、4:5、9:16
 - 1K、2K、4K 尺寸映射
+- 自定义厘米海报尺寸：精确保持比例，支持三种模型；也可直接指定合法像素尺寸
+- 离线 `guide` 中文选型说明、`canvas` 尺寸预检（不需要 Key，不收费）
 - JSON、Base64、Data URL、SSE 和远程图片 URL 响应解析
-- 429/5xx 有界重试、超时、输入限制和 API Key 脱敏
+- 429 有界重试；生图超时/网关错误等未知结果停止重发，避免重复扣费；输入限制和 API Key 脱敏
 - 仅依赖 Python 3.10+ 标准库
 
 ## 安装
@@ -32,6 +46,8 @@ git clone https://github.com/CTctikki/sufy-image2 ~/.codex/skills/sufy-image2
 ```
 
 其他 Agent 请复制到其兼容的 Skills 目录，确保 `SKILL.md` 位于 Skill 根目录。
+
+已安装用户可直接说“请更新 sufy-image2 到最新版，保留我的本地修改”。Git 安装且工作区干净时可 `git pull --ff-only`；有本地修改或分叉时先保存并合并，不用 `reset --hard`、覆盖整个目录或删除原输出。非 Git 安装先将新版解压到旁边目录再对比合并；更新不需要复制任何个人 Key 或历史图片。
 
 ## 用户使用方式
 
@@ -89,10 +105,26 @@ python scripts/sufy_image2.py batch --prompts-file prompts.txt --image product.p
 
 ## 重要限制
 
+### 自定义海报尺寸
+
+```bash
+python scripts/sufy_image2.py canvas --width-cm 120 --height-cm 40 --quality 4K
+python scripts/sufy_image2.py generate --prompt "活动海报，完整保留标题与卖点" --width-cm 120 --height-cm 40 --quality 4K --model SF-gpt-image-2.5-sunburst
+python scripts/sufy_image2.py generate --prompt "活动海报" --resolution 3072x1024
+```
+
+第一条只计算尺寸，不生图。120×40 厘米在 4K 档会请求 3840×1280 像素；29.7×21 厘米会请求 3168×2240 像素。并非只支持这些尺寸。
+
+- 三种模型使用相同范围：宽高比 1:3～3:1，两边为 16 的倍数，最长边不超过 3840，总像素 655,360～8,294,400。
+- 厘米宽高必须能精确换算；无法精确表示会明确报错，不近似比例、不裁切或补边。支持最多 6 位小数；不要把商品自身尺寸当作海报尺寸。
+- `--width-cm` 与 `--height-cm` 必须成对使用，且不能和 `--ratio` / `--resolution` 混用。`edit`、`batch` 同样支持。
+- 厘米用于确定画布比例，不代表原生印刷 DPI。结果 JSON 同时包含请求尺寸及能读取到的实际图片宽高；交付前实际预览小字与商品，不用 Mock 测试代替视觉验收。
+
 - 参考图仅支持 JPEG、PNG、GIF、WebP，最多 12 张，原图合计不超过 15 MB。
 - 单批最多 10 个任务，建议并发 1–3。
 - 当前站点界面的 seed 不会传给 `SF-gpt-image-2`，因此本 Skill 不承诺固定 seed 复现。
 - 4K 请求可能需要最长约 30 分钟。
+- 生图超时、连接中断或 HTTP 408/409/5xx 时结果可能已生成并计费，脚本不会自动重发。先核对服务端记录；批量部分失败时保留已保存图片，不整批重跑。
 
 ## 给用户转发
 
@@ -105,6 +137,10 @@ python -m unittest discover -s tests -v
 ```
 
 测试使用本地 Mock Server，不需要真实 API Key，也不会产生调用费用。
+
+2026-09-20 更新验证：40 项单测通过，3894 组厘米画布输入与网站算法结果逐项一致，Skill 元数据校验通过；这不替代真实生成的小字视觉验收。
+
+本次对齐网站源码 `c00dc693f8dbf2021bfa36d62050447df5bda587` 的模型、厘米画布与未知结果保护；不是网站 COS、登录后台或 Windows 客户端的复制品。
 
 ## License
 

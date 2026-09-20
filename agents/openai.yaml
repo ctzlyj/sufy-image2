@@ -1,4 +1,4 @@
 interface:
   display_name: "SUFY Image2"
-  short_description: "SF-gpt-image-2 商品套图、服装换装与多图编辑"
-  default_prompt: "Use $sufy-image2 to generate or edit an image, including Image Studio product-set and clothing-workbench workflows, with my LTS4AI API key."
+  short_description: "Flare / Sunburst 生图、厘米海报与多图编辑"
+  default_prompt: "Use $sufy-image2 with my LTS4AI API key to generate or edit an image, choose Flare or Sunburst, and preserve my custom canvas size and all requested text."

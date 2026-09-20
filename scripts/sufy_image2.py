@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Portable LTS4AI SF-gpt-image-2 client."""
+"""Portable LTS4AI SF-gpt-image client."""
 
 from __future__ import annotations
 
@@ -7,7 +7,9 @@ import argparse
 import base64
 import concurrent.futures
 import getpass
+import http.client
 import json
+import math
 import os
 import re
 import struct
@@ -16,6 +18,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import unicodedata
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,7 +26,16 @@ from typing import Any, Callable
 
 
 DEFAULT_BASE_URL = "https://api.lts4ai.com/v1"
-DEFAULT_MODEL = "SF-gpt-image-2"
+DEFAULT_MODEL = "SF-gpt-image-2.5-flare"
+MODEL_GUIDE = [
+    {"id": DEFAULT_MODEL, "label": "Flare（日常推荐）", "description": "日常商品图、批量出图和快速试方案，优先选 Flare。"},
+    {"id": "SF-gpt-image-2.5-sunburst", "label": "Sunburst（精细编辑）", "description": "重要海报、商品精修和需要精准修改的成片，可选 Sunburst。"},
+    {"id": "SF-gpt-image-2", "label": "Image2（原模型）", "description": "延续原有方案时可手动选择，不自动替换用户已选模型。"},
+]
+MIN_CANVAS_PIXELS = 655_360
+MAX_CANVAS_PIXELS = 8_294_400
+MAX_CANVAS_SIDE = 3840
+UNKNOWN_RESULT = "Result unknown; check task/billing status before resubmitting to avoid duplicate charges."
 MAX_REFERENCE_IMAGES = 12
 MAX_REFERENCE_BYTES = 15 * 1024 * 1024
 
@@ -97,8 +109,7 @@ def resolve_size(
 ) -> str:
     """Map the site's ratio and quality controls to the provider size field."""
     if explicit_resolution is not None:
-        if explicit_resolution != "auto" and not re.fullmatch(r"[1-9]\d*x[1-9]\d*", explicit_resolution):
-            raise SkillError("Resolution must look like 1024x1024 or be auto.")
+        validate_resolution(explicit_resolution)
         return explicit_resolution
 
     normalized_quality = quality.upper()
@@ -122,6 +133,75 @@ def resolve_size(
     if normalized_ratio in {"9:16", "3:4", "2:3", "4:5"}:
         return "1024x1536"
     return "auto"
+
+
+def validate_resolution(resolution: str) -> None:
+    if resolution == "auto":
+        return
+    if not re.fullmatch(r"[1-9][0-9]{0,3}x[1-9][0-9]{0,3}", resolution):
+        raise SkillError("Resolution must look like 1024x1024 or be auto.")
+    width, height = map(int, resolution.split("x"))
+    if (width % 16 or height % 16 or max(width, height) > MAX_CANVAS_SIDE
+            or not MIN_CANVAS_PIXELS <= width * height <= MAX_CANVAS_PIXELS
+            or width > height * 3 or height > width * 3):
+        raise SkillError("Unsupported resolution: use multiples of 16, sides <=3840, "
+                         "655360-8294400 pixels and an aspect ratio between 1:3 and 3:1.")
+
+
+def _centimeter_integer(value: str) -> int:
+    text = unicodedata.normalize("NFKC", value).strip()
+    if not re.fullmatch(r"[0-9]{1,9}(?:\.[0-9]{1,6})?", text):
+        raise SkillError("Centimeters must be positive decimals with at most 9 integer and 6 decimal digits.")
+    whole, _, fraction = text.partition(".")
+    integer = int(whole) * 1_000_000 + int(fraction.ljust(6, "0"))
+    if integer <= 0:
+        raise SkillError("Centimeters must be greater than zero.")
+    return integer
+
+
+def calculate_custom_canvas(width_cm: str, height_cm: str, quality: str) -> dict[str, Any]:
+    width_integer = _centimeter_integer(width_cm)
+    height_integer = _centimeter_integer(height_cm)
+    divisor = math.gcd(width_integer, height_integer)
+    numerator, denominator = width_integer // divisor, height_integer // divisor
+    if numerator > denominator * 3 or denominator > numerator * 3:
+        raise SkillError("Canvas aspect ratio must be between 1:3 and 3:1; it will not be approximated.")
+    unit_width, unit_height = numerator * 16, denominator * 16
+    unit_pixels = unit_width * unit_height
+    minimum = math.isqrt((MIN_CANVAS_PIXELS - 1) // unit_pixels) + 1
+    maximum = min(MAX_CANVAS_SIDE // max(unit_width, unit_height), math.isqrt(MAX_CANVAS_PIXELS // unit_pixels))
+    if minimum > maximum:
+        raise SkillError("These centimeters cannot map exactly to a supported pixel canvas; adjust width/height.")
+    target = {"1K": 1_048_576, "2K": 3_145_728, "4K": MAX_CANVAS_PIXELS}.get(quality.upper())
+    if target is None:
+        raise SkillError("Quality must be one of 1K, 2K, or 4K.")
+    multiplier = max(minimum, min(maximum, math.isqrt(target // unit_pixels)))
+    width, height = unit_width * multiplier, unit_height * multiplier
+    return {"widthCm": width_cm, "heightCm": height_cm, "width": width, "height": height,
+            "size": f"{width}x{height}", "ratio": f"{numerator}:{denominator}"}
+
+
+def resolve_cli_canvas(arguments: argparse.Namespace, first_image: Path | None = None) -> tuple[str, dict[str, Any] | None]:
+    if arguments.width_cm is not None or arguments.height_cm is not None:
+        if arguments.width_cm is None or arguments.height_cm is None:
+            raise SkillError("Provide both --width-cm and --height-cm.")
+        if arguments.ratio is not None or arguments.resolution is not None:
+            raise SkillError("Centimeter dimensions cannot be combined with --ratio or --resolution.")
+        canvas = calculate_custom_canvas(arguments.width_cm, arguments.height_cm, arguments.quality)
+        return canvas["size"], canvas
+    if arguments.ratio is not None and arguments.resolution is not None:
+        raise SkillError("Choose --ratio or --resolution, not both.")
+    return resolve_size(arguments.ratio or "1:1", arguments.quality, first_image, arguments.resolution), None
+
+
+def build_canvas_prompt(prompt: str, canvas: dict[str, Any] | None) -> str:
+    _require_prompt(prompt)
+    if canvas is None:
+        return prompt
+    return (f"{prompt}\n\n画布规格：宽{canvas['widthCm']}厘米、高{canvas['heightCm']}厘米，"
+            f"整张图片宽:高={canvas['ratio']}，输出{canvas['width']}×{canvas['height']}像素。"
+            "按此画布直接构图，不拉伸、不压扁、不裁切或添加边框凑比例；保留用户全部指定文案，"
+            "不把画布尺寸当成商品尺寸或新增画面文案。")
 
 
 def nearest_ratio(width: int, height: int) -> str:
@@ -330,13 +410,19 @@ class SfImage2Client:
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:
                     return response.read(), response.headers.get("Content-Type", "")
             except urllib.error.HTTPError as error:
-                error_body = error.read()
-                if attempt < self.retries and (error.code == 429 or error.code >= 500):
+                try:
+                    error_body = error.read()
+                except (http.client.HTTPException, TimeoutError, OSError):
+                    error_body = b""
+                if method == "POST" and (error.code >= 500 or error.code in {408, 409}):
+                    raise SkillError(f"{self._http_error(error.code, error_body)} {UNKNOWN_RESULT}") from None
+                if attempt < self.retries and (error.code == 429 or (method == "GET" and error.code >= 500)):
                     self.sleep(_retry_delay(attempt))
                     continue
                 raise self._http_error(error.code, error_body) from None
-            except (urllib.error.URLError, TimeoutError, OSError) as error:
-                raise SkillError(f"LTS4AI request failed: {_safe_network_reason(error)}") from None
+            except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as error:
+                suffix = f" {UNKNOWN_RESULT}" if method == "POST" else ""
+                raise SkillError(f"LTS4AI request failed: {_safe_network_reason(error)}{suffix}") from None
         raise SkillError("LTS4AI request failed after retries.")
 
     def _http_error(self, status: int, response_body: bytes) -> SkillError:
@@ -593,34 +679,39 @@ def resolve_api_key(read_stdin: bool) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sufy_image2.py",
-        description="Generate and edit images with LTS4AI SF-gpt-image-2.",
+        description="Generate and edit images with LTS4AI Flare, Sunburst, or Image2.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--base-url", default=DEFAULT_BASE_URL)
-    common.add_argument("--model", default=DEFAULT_MODEL)
+    common.add_argument("--model", default=DEFAULT_MODEL, help=f"Exact LTS4AI model ID (default: {DEFAULT_MODEL}).")
     common.add_argument("--timeout", type=float, default=None)
-    common.add_argument("--retries", type=int, default=2)
+    common.add_argument("--retries", type=int, default=2, help="Retries for HTTP 429 and read-only GET 5xx, never uncertain generation errors.")
     common.add_argument(
         "--api-key-stdin",
         action="store_true",
         help="Read the API key from one stdin line instead of a command argument.",
     )
 
-    image_options = argparse.ArgumentParser(add_help=False, parents=[common])
-    image_options.add_argument(
+    canvas_options = argparse.ArgumentParser(add_help=False)
+    canvas_options.add_argument(
         "--ratio",
         choices=["Adaptive", *FIXED_RATIOS.keys()],
-        default="1:1",
+        default=None,
     )
-    image_options.add_argument("--quality", choices=["1K", "2K", "4K"], default="2K")
-    image_options.add_argument(
+    canvas_options.add_argument("--quality", choices=["1K", "2K", "4K"], default="2K")
+    canvas_options.add_argument(
         "--resolution",
-        help="Expert override such as 2048x2048 or auto.",
+        help="Supported pixel canvas such as 2048x2048 or auto; not combined with ratio/centimeters.",
     )
+    canvas_options.add_argument("--width-cm", help="Exact canvas width in centimeters, paired with --height-cm.")
+    canvas_options.add_argument("--height-cm", help="Exact canvas height in centimeters, paired with --width-cm.")
+    image_options = argparse.ArgumentParser(add_help=False, parents=[common, canvas_options])
     image_options.add_argument("--output-dir", type=Path, default=Path("output"))
 
+    subparsers.add_parser("canvas", parents=[canvas_options], help="Calculate a supported canvas offline; no key or paid call.")
+    subparsers.add_parser("guide", help="Show the Chinese model guide and local comparison image offline.")
     subparsers.add_parser("models", parents=[common], help="List available provider models.")
 
     generate = subparsers.add_parser(
@@ -656,6 +747,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
     try:
+        if arguments.command == "guide":
+            _print_json({"ok": True, "operation": "guide", "defaultModel": DEFAULT_MODEL, "models": MODEL_GUIDE,
+                         "comparisonImage": str(Path(__file__).resolve().parents[1] / "assets" / "image-model-comparison.png")})
+            return 0
+        if arguments.command == "canvas":
+            size, canvas = resolve_cli_canvas(arguments)
+            _print_json({"ok": True, "operation": "canvas", "size": size, **({"canvas": canvas} if canvas else {})})
+            return 0
         api_key = resolve_api_key(arguments.api_key_stdin)
         timeout = arguments.timeout
         if timeout is None:
@@ -671,24 +770,15 @@ def main(argv: list[str] | None = None) -> int:
             _print_json({"ok": True, "operation": "models", "models": client.list_models()})
             return 0
         if arguments.command == "generate":
-            size = resolve_size(
-                arguments.ratio,
-                arguments.quality,
-                explicit_resolution=arguments.resolution,
-            )
-            output = client.generate(arguments.prompt, size, arguments.output_dir)
-            _print_json(_single_summary("generate", client.model, size, output))
+            size, canvas = resolve_cli_canvas(arguments)
+            output = client.generate(build_canvas_prompt(arguments.prompt, canvas), size, arguments.output_dir)
+            _print_json(_single_summary("generate", client.model, size, output, canvas))
             return 0
         if arguments.command == "edit":
             references = validate_reference_images(arguments.image)
-            size = resolve_size(
-                arguments.ratio,
-                arguments.quality,
-                references[0].path,
-                arguments.resolution,
-            )
-            output = client.edit(arguments.prompt, references, size, arguments.output_dir)
-            _print_json(_single_summary("edit", client.model, size, output))
+            size, canvas = resolve_cli_canvas(arguments, references[0].path)
+            output = client.edit(build_canvas_prompt(arguments.prompt, canvas), references, size, arguments.output_dir)
+            _print_json(_single_summary("edit", client.model, size, output, canvas))
             return 0
         if arguments.command == "batch":
             summary = run_batch(client, arguments)
@@ -706,16 +796,12 @@ def run_batch(client: SfImage2Client, arguments: argparse.Namespace) -> dict[str
         raise SkillError("Batch concurrency must be between 1 and 10.")
     references = validate_reference_images(arguments.image) if arguments.image else []
     first_image = references[0].path if references else None
-    size = resolve_size(
-        arguments.ratio,
-        arguments.quality,
-        first_image,
-        arguments.resolution,
-    )
+    size, canvas = resolve_cli_canvas(arguments, first_image)
     operation = "edit" if references else "generate"
 
     def worker(item: tuple[int, str]) -> tuple[int, OutputImage]:
         index, prompt = item
+        prompt = build_canvas_prompt(prompt, canvas)
         stem = f"{operation}-{index:03d}"
         if references:
             output = client.edit(prompt, references, size, arguments.output_dir, stem=stem)
@@ -735,6 +821,7 @@ def run_batch(client: SfImage2Client, arguments: argparse.Namespace) -> dict[str
         "operation": "batch-edit" if references else "batch-generate",
         "model": client.model,
         "size": size,
+        **({"canvas": canvas} if canvas else {}),
         "outputs": [
             {"index": index, **_output_record(output)}
             for index, output in results
@@ -758,21 +845,24 @@ def _batch_prompts(prompt: str | None, prompts_file: Path | None, count: int) ->
     return prompts
 
 
-def _single_summary(operation: str, model: str, size: str, output: OutputImage) -> dict[str, Any]:
+def _single_summary(operation: str, model: str, size: str, output: OutputImage, canvas: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "ok": True,
         "operation": operation,
         "model": model,
         "size": size,
+        **({"canvas": canvas} if canvas else {}),
         "outputs": [{"index": 1, **_output_record(output)}],
     }
 
 
 def _output_record(output: OutputImage) -> dict[str, Any]:
+    dimensions = read_image_dimensions(output.path)
     return {
         "path": str(output.path),
         "mimeType": output.mime_type,
         "bytes": output.size,
+        **({"width": dimensions[0], "height": dimensions[1]} if dimensions else {}),
     }
 
 

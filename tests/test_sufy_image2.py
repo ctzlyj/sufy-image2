@@ -2,6 +2,7 @@ import importlib.util
 import base64
 import contextlib
 import io
+import http.client
 import json
 import os
 import struct
@@ -93,6 +94,38 @@ def start_mock_provider(state: MockProviderState):
 
 
 class ResolutionAndValidationTests(unittest.TestCase):
+    def test_custom_centimeters_match_website_without_rounding_ratio(self):
+        for width, height, quality, expected in [
+            ("120", "40", "1K", "1728x576"),
+            ("120", "40", "2K", "3072x1024"),
+            ("120", "40", "4K", "3840x1280"),
+            ("40", "120", "4K", "1280x3840"),
+            ("29.7", "21", "4K", "3168x2240"),
+            ("0.000003", "0.000001", "2K", "3072x1024"),
+            ("１２０", "４０", "2K", "3072x1024"),
+        ]:
+            with self.subTest(width=width, height=height, quality=quality):
+                canvas = module.calculate_custom_canvas(width, height, quality)
+                self.assertEqual(canvas["size"], expected)
+                self.assertEqual(canvas["widthCm"], width)
+                self.assertEqual(canvas["heightCm"], height)
+
+    def test_custom_canvas_rejects_invalid_or_unrepresentable_dimensions(self):
+        for width, height in [("0", "40"), ("-1", "1"), ("121", "40"),
+                              ("20.123456", "10"), ("NaN", "10"), ("1e2", "10"),
+                              ("1.0000001", "1"), ("1000000000", "1")]:
+            with self.subTest(width=width, height=height):
+                with self.assertRaises(module.SkillError):
+                    module.calculate_custom_canvas(width, height, "2K")
+
+    def test_explicit_resolution_enforces_supported_pixel_envelope(self):
+        for resolution in ["512x1280", "1280x512", "3840x1280", "2880x2880", "auto"]:
+            self.assertEqual(module.resolve_size("1:1", "2K", explicit_resolution=resolution), resolution)
+        for resolution in ["4096x1024", "513x1280", "512x512", "3840x3840", "3072x512"]:
+            with self.subTest(resolution=resolution):
+                with self.assertRaises(module.SkillError):
+                    module.resolve_size("1:1", "2K", explicit_resolution=resolution)
+
     def test_current_site_resolution_mapping(self):
         self.assertEqual(module.resolve_size("1:1", "2K"), "1024x1024")
         self.assertEqual(module.resolve_size("16:9", "2K"), "1536x1024")
@@ -187,7 +220,7 @@ class ProviderContractTests(unittest.TestCase):
         self.assertEqual(request["headers"]["Content-Type"], "application/json")
         payload = json.loads(request["body"])
         self.assertEqual(payload, {
-            "model": "SF-gpt-image-2",
+            "model": "SF-gpt-image-2.5-flare",
             "prompt": "draw a red circle",
             "size": "1024x1024",
             "output_format": "png",
@@ -212,7 +245,7 @@ class ProviderContractTests(unittest.TestCase):
         content_type = request["headers"]["Content-Type"]
         self.assertRegex(content_type, r"^multipart/form-data; boundary=.+")
         body = request["body"]
-        self.assertIn(b'name="model"\r\n\r\nSF-gpt-image-2', body)
+        self.assertIn(b'name="model"\r\n\r\nSF-gpt-image-2.5-flare\r\n', body)
         self.assertIn(b'name="prompt"\r\n\r\nkeep the product', body)
         self.assertIn(b'name="size"\r\n\r\n1024x1536', body)
         self.assertIn(b'name="output_format"\r\n\r\npng', body)
@@ -255,9 +288,9 @@ class ProviderContractTests(unittest.TestCase):
         with self.assertRaisesRegex(module.SkillError, "valid image"):
             self.client().generate("invalid", "1024x1024", self.output_dir)
 
-    def test_retries_rate_limits_and_server_errors(self):
+    def test_retries_explicit_rate_limits(self):
         self.queue_json({"error": {"message": "slow down"}}, status=429)
-        self.queue_json({"error": {"message": "temporary"}}, status=503)
+        self.queue_json({"error": {"message": "slow down"}}, status=429)
         self.queue_json({"data": [{"b64_json": PNG_BASE64}]})
         sleeps = []
         client = self.client(retries=2, sleep=sleeps.append)
@@ -268,6 +301,45 @@ class ProviderContractTests(unittest.TestCase):
         self.assertEqual(len(self.state.requests), 3)
         self.assertEqual(sleeps, [1.0, 3.0])
 
+    def test_generation_server_errors_are_not_automatically_resubmitted(self):
+        self.queue_json({"error": {"message": "gateway timeout"}}, status=504)
+        self.queue_json({"data": [{"b64_json": PNG_BASE64}]})
+        with self.assertRaisesRegex(module.SkillError, "unknown"):
+            self.client().generate("do not duplicate", "1024x1024", self.output_dir)
+        self.assertEqual(len(self.state.requests), 1)
+
+    def test_model_catalog_get_can_retry_server_errors(self):
+        self.queue_json({"error": {"message": "temporary"}}, status=503)
+        self.queue_json({"data": [{"id": "SF-gpt-image-2.5-flare"}]})
+        self.assertEqual(self.client().list_models(), ["SF-gpt-image-2.5-flare"])
+        self.assertEqual(len(self.state.requests), 2)
+
+    def test_edit_network_timeout_is_unknown_and_not_retried(self):
+        image_path = self.output_dir / "reference.png"
+        image_path.write_bytes(PNG_BYTES)
+        with mock.patch.object(module.urllib.request, "urlopen", side_effect=TimeoutError) as request:
+            with self.assertRaisesRegex(module.SkillError, "unknown"):
+                self.client().edit("keep text", module.validate_reference_images([image_path]),
+                                   "1024x1024", self.output_dir)
+        self.assertEqual(request.call_count, 1)
+
+    def test_incomplete_body_is_unknown_and_not_retried(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.side_effect = http.client.IncompleteRead(b"partial")
+        with mock.patch.object(module.urllib.request, "urlopen", return_value=response) as request:
+            with self.assertRaisesRegex(module.SkillError, "unknown"):
+                self.client().generate("poster", "1024x1024", self.output_dir)
+        self.assertEqual(request.call_count, 1)
+
+    def test_request_timeout_or_conflict_is_unknown(self):
+        for status in [408, 409]:
+            with self.subTest(status=status):
+                self.queue_json({"error": {"message": "pending"}}, status=status)
+                before = len(self.state.requests)
+                with self.assertRaisesRegex(module.SkillError, "unknown"):
+                    self.client().generate("poster", "1024x1024", self.output_dir)
+                self.assertEqual(len(self.state.requests), before + 1)
+
     def test_errors_never_include_api_key(self):
         self.queue_json({"error": {"message": "unauthorized"}}, status=401)
         with self.assertRaises(module.SkillError) as raised:
@@ -276,6 +348,83 @@ class ProviderContractTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
+    def test_default_is_flare_for_all_image_commands(self):
+        for command in ["generate", "edit", "batch"]:
+            arguments = [command, "--prompt", "keep title"]
+            if command == "edit":
+                arguments.extend(["--image", "reference.png"])
+            self.assertEqual(module.build_parser().parse_args(arguments).model, "SF-gpt-image-2.5-flare")
+
+    def test_offline_canvas_and_guide_need_no_key_or_network(self):
+        for arguments in [["canvas", "--width-cm", "120", "--height-cm", "40", "--quality", "4K"],
+                          ["guide"]]:
+            with mock.patch.object(module, "resolve_api_key", side_effect=AssertionError("must be offline")):
+                status, stdout, stderr = self.invoke(arguments)
+            self.assertEqual((status, stderr), (0, ""))
+            summary = json.loads(stdout)
+            if arguments[0] == "canvas":
+                self.assertEqual(summary["size"], "3840x1280")
+                self.assertEqual(summary["canvas"]["ratio"], "3:1")
+            else:
+                self.assertEqual(summary["defaultModel"], "SF-gpt-image-2.5-flare")
+                self.assertTrue(Path(summary["comparisonImage"]).is_file())
+                self.assertEqual(len(summary["models"]), 3)
+        self.assertEqual(self.state.requests, [])
+
+    def test_custom_canvas_reaches_all_commands_and_models(self):
+        image_path = self.directory / "reference.png"
+        image_path.write_bytes(PNG_BYTES)
+        prompt = "保留全部标题与卖点，不改变背景。"
+        for model in ["SF-gpt-image-2.5-flare", "SF-gpt-image-2.5-sunburst", "SF-gpt-image-2"]:
+            for command in ["generate", "edit", "batch"]:
+                with self.subTest(model=model, command=command):
+                    self.queue_image()
+                    arguments = [command, "--prompt", prompt, "--model", model,
+                                 "--width-cm", "120", "--height-cm", "40", *self.common_arguments()]
+                    if command in {"edit", "batch"}:
+                        arguments.extend(["--image", str(image_path)])
+                    status, stdout, stderr = self.invoke(arguments)
+                    self.assertEqual((status, stderr), (0, ""))
+                    summary = json.loads(stdout)
+                    self.assertEqual((summary["model"], summary["size"]), (model, "3072x1024"))
+                    self.assertEqual(summary["canvas"]["ratio"], "3:1")
+                    request = self.state.requests[-1]
+                    if command == "generate":
+                        payload = json.loads(request["body"])
+                        self.assertEqual(payload["model"], model)
+                        self.assertEqual(payload["size"], "3072x1024")
+                        self.assertTrue(payload["prompt"].startswith(prompt))
+                        self.assertIn("画布规格：宽120厘米、高40厘米", payload["prompt"])
+                    else:
+                        body = request["body"].decode("utf-8", errors="replace")
+                        self.assertIn(f'name="model"\r\n\r\n{model}\r\n', body)
+                        self.assertIn('name="size"\r\n\r\n3072x1024\r\n', body)
+                        self.assertIn(prompt, body)
+                        self.assertIn("画布规格：宽120厘米、高40厘米", body)
+                    self.assertTrue(Path(summary["outputs"][0]["path"]).is_file())
+
+    def test_invalid_or_conflicting_canvas_never_sends_request(self):
+        for options in [["--width-cm", "120"], ["--height-cm", "40"],
+                        ["--width-cm", "121", "--height-cm", "40"],
+                        ["--width-cm", "120", "--height-cm", "40", "--ratio", "1:1"],
+                        ["--width-cm", "120", "--height-cm", "40", "--resolution", "auto"]]:
+            with self.subTest(options=options):
+                status, stdout, stderr = self.invoke(["generate", "--prompt", "poster", *options,
+                                                      *self.common_arguments()])
+                self.assertEqual(status, 1)
+                self.assertEqual(stdout, "")
+                self.assertTrue(stderr)
+        self.assertEqual(self.state.requests, [])
+
+    def test_blank_custom_canvas_prompt_cannot_generate(self):
+        status, stdout, stderr = self.invoke(["generate", "--prompt", "  ",
+                                              "--width-cm", "120", "--height-cm", "40",
+                                              *self.common_arguments()])
+        self.assertEqual(status, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("prompt", stderr.lower())
+        self.assertEqual(self.state.requests, [])
+
     def setUp(self):
         self.state = MockProviderState()
         self.server, self.thread = start_mock_provider(self.state)
@@ -355,6 +504,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(stderr, "")
         self.assertEqual(summary["operation"], "generate")
+        self.assertEqual(summary["size"], "1024x1024")
+        self.assertEqual((summary["outputs"][0]["width"], summary["outputs"][0]["height"]), (2, 2))
         self.assertEqual(len(summary["outputs"]), 1)
         self.assertTrue(Path(summary["outputs"][0]["path"]).is_file())
 
