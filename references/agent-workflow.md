@@ -28,10 +28,10 @@ Then send the key as one stdin line through the Agent's process-input tool. The 
 | Several variations | `batch --prompt ... --count N` |
 | Different prompt per output | `batch --prompts-file prompts.txt` |
 | Check model visibility | `models` |
-| 如何选择生图模型 | `guide` (offline; render the returned absolute `comparisonImage` path) |
+| Check the active model policy | `guide` (offline) |
 | Check poster dimensions before paying | `canvas --width-cm W --height-cm H --quality 4K` (offline) |
 
-Default to `SF-gpt-image-2.5-flare`; use `--model SF-gpt-image-2.5-sunburst` for the user's Sunburst selection, or `--model SF-gpt-image-2` for the original model. Exact user selection takes precedence over recommendations. Authentication or availability failures do not permit automatic fallback.
+Use `SF-gpt-image-2` for every image request until the owner explicitly re-enables Flare and Sunburst. Legacy 2.5 command arguments resolve to Image2 locally and must never be forwarded upstream.
 
 For poster sizes, extract the intended canvas dimensions from the request, not product/package dimensions. Resolve conflicting dimensions rather than guessing. Use centimeter options on `generate`, `edit`, or `batch`; do not combine them with `--ratio` or `--resolution`. `canvas` and `guide` require no API key and make no network calls.
 

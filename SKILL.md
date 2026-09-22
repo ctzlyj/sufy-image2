@@ -1,18 +1,16 @@
 ---
 name: sufy-image2
-description: Use when a user wants to generate, redraw, edit, restyle, or batch-create images with an LTS4AI API key using SF-gpt-image-2.5-flare, SF-gpt-image-2.5-sunburst, or SF-gpt-image-2, including Image Studio 商品套图, 服装工作台, multi-reference editing, custom centimeter poster sizes, and 1K/2K/4K output.
+description: Use when a user wants to generate, redraw, edit, restyle, or batch-create images with an LTS4AI API key using SF-gpt-image-2, including Image Studio 商品套图, 服装工作台, multi-reference editing, custom centimeter poster sizes, and 1K/2K/4K output.
 ---
 
 # SUFY Image2
 
-Use the bundled standard-library Python client with the image-model contracts used by `image.ctikki.com`. Default to `SF-gpt-image-2.5-flare`; retain the user's explicitly selected model, including `SF-gpt-image-2.5-sunburst` and the original `SF-gpt-image-2`. Do not silently fall back when a model is unavailable.
+Use the bundled standard-library Python client with the image-model contracts used by `image.ctikki.com`. Until the owner explicitly re-enables the 2.5 models, send every image request with `SF-gpt-image-2`. Legacy `--model SF-gpt-image-2.5-flare` and `--model SF-gpt-image-2.5-sunburst` inputs are accepted only for compatibility and are resolved to Image2 before any request.
 
-## 更换生图模型 / 如何选择生图模型
+## 当前模型策略
 
-- **Flare（日常推荐）**：日常商品图、批量出图和快速试方案；默认模型。
-- **Sunburst（精细编辑）**：重要海报、商品精修和需要精准修改的成片。
-- **Image2（原模型）**：延续原方案时可手动指定。
-- 用户问如何选择时，运行 `python scripts/sufy_image2.py guide`，用中文解释并展示返回的本地对比图；不要让用户访问英文官方说明或外部链接。对比图随 Skill 安装，无需联网。建议不是速度、价格或质量保证，实际可用模型以用户 Key 的 `models` 结果为准。
+- **Image2（当前统一模型）**：所有文生图、参考图编辑、批量任务和自定义尺寸任务均使用 `SF-gpt-image-2`。
+- **Flare / Sunburst**：暂时停用，不推荐、不主动选择，也不向上游发送这两个模型 ID；等待所有者明确通知后再恢复。
 
 ## Workflow
 
@@ -50,10 +48,10 @@ Add `--api-key-stdin` after the subcommand when using stdin. Never put the key i
 
 ```bash
 python scripts/sufy_image2.py canvas --width-cm 120 --height-cm 40 --quality 4K
-python scripts/sufy_image2.py generate --prompt "海报设计，保留全部指定标题与卖点" --width-cm 120 --height-cm 40 --quality 4K --model SF-gpt-image-2.5-sunburst
+python scripts/sufy_image2.py generate --prompt "海报设计，保留全部指定标题与卖点" --width-cm 120 --height-cm 40 --quality 4K
 ```
 
-`canvas` is offline and free; the second command generates a paid image. Width/height set the exact aspect ratio, not native print resolution or DPI. Report requested `size` separately from each output's measured `width`/`height`; inspect actual output rather than claiming a 120 cm print is natively 300 DPI. All three models use the same custom-size limits, not just the 120×40 example.
+`canvas` is offline and free; the second command generates a paid image. Width/height set the exact aspect ratio, not native print resolution or DPI. Report requested `size` separately from each output's measured `width`/`height`; inspect actual output rather than claiming a 120 cm print is natively 300 DPI. Image2 keeps the existing custom-size limits; 120×40 is only an example.
 
 ## Operating Rules
 

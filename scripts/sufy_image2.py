@@ -26,11 +26,9 @@ from typing import Any, Callable
 
 
 DEFAULT_BASE_URL = "https://api.lts4ai.com/v1"
-DEFAULT_MODEL = "SF-gpt-image-2.5-flare"
+DEFAULT_MODEL = "SF-gpt-image-2"
 MODEL_GUIDE = [
-    {"id": DEFAULT_MODEL, "label": "Flare（日常推荐）", "description": "日常商品图、批量出图和快速试方案，优先选 Flare。"},
-    {"id": "SF-gpt-image-2.5-sunburst", "label": "Sunburst（精细编辑）", "description": "重要海报、商品精修和需要精准修改的成片，可选 Sunburst。"},
-    {"id": "SF-gpt-image-2", "label": "Image2（原模型）", "description": "延续原有方案时可手动选择，不自动替换用户已选模型。"},
+    {"id": DEFAULT_MODEL, "label": "Image2（当前统一模型）", "description": "Flare 和 Sunburst 暂停期间，所有生图统一使用 Image2。"},
 ]
 MIN_CANVAS_PIXELS = 655_360
 MAX_CANVAS_PIXELS = 8_294_400
@@ -309,7 +307,7 @@ class SfImage2Client:
             raise SkillError("Retries cannot be negative.")
         self.api_key = trimmed_key
         self.api_root = normalize_api_root(base_url)
-        self.model = model.strip() or DEFAULT_MODEL
+        self.model = DEFAULT_MODEL
         self.timeout = timeout
         self.retries = retries
         self.sleep = sleep
@@ -679,7 +677,7 @@ def resolve_api_key(read_stdin: bool) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sufy_image2.py",
-        description="Generate and edit images with LTS4AI Flare, Sunburst, or Image2.",
+        description="Generate and edit images with LTS4AI Image2.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -748,8 +746,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     try:
         if arguments.command == "guide":
-            _print_json({"ok": True, "operation": "guide", "defaultModel": DEFAULT_MODEL, "models": MODEL_GUIDE,
-                         "comparisonImage": str(Path(__file__).resolve().parents[1] / "assets" / "image-model-comparison.png")})
+            _print_json({"ok": True, "operation": "guide", "defaultModel": DEFAULT_MODEL, "models": MODEL_GUIDE})
             return 0
         if arguments.command == "canvas":
             size, canvas = resolve_cli_canvas(arguments)

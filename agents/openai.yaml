@@ -1,4 +1,4 @@
 interface:
   display_name: "SUFY Image2"
-  short_description: "Flare / Sunburst 生图、厘米海报与多图编辑"
-  default_prompt: "Use $sufy-image2 with my LTS4AI API key to generate or edit an image, choose Flare or Sunburst, and preserve my custom canvas size and all requested text."
+  short_description: "Image2 生图、厘米海报与多图编辑"
+  default_prompt: "Use $sufy-image2 with my LTS4AI API key to generate or edit an image with Image2 while preserving my custom canvas size and all requested text."

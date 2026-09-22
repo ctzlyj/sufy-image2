@@ -2,19 +2,15 @@
 
 把 `image.ctikki.com` 使用的 LTS4AI 生图能力封装成可安装的 Agent Skill。安装后，用户只需向 Agent 提供自己的 LTS4AI API Key，再用自然语言描述想生成或修改的图片。
 
-> Skill 名称继续保留 SUFY Image2；默认模型更新为 `SF-gpt-image-2.5-flare`，可切换 Sunburst 或原 Image2。默认接口为 `https://api.lts4ai.com/v1`。
+> Skill 名称继续保留 SUFY Image2；当前所有生图统一使用 `SF-gpt-image-2`，Flare 和 Sunburst 暂停，等待所有者明确通知后再恢复。默认接口为 `https://api.lts4ai.com/v1`。
 
-## 如何选择生图模型
+## 当前模型状态
 
 | 模型 | 建议用途 | 完整模型 ID |
 |---|---|---|
-| Flare（默认） | 日常商品图、批量出图、快速试方案 | `SF-gpt-image-2.5-flare` |
-| Sunburst | 重要海报、商品精修、精准修改 | `SF-gpt-image-2.5-sunburst` |
-| Image2（原模型） | 延续原有方案 | `SF-gpt-image-2` |
+| Image2（当前统一模型） | 所有生图、编辑、批量和自定义尺寸任务 | `SF-gpt-image-2` |
 
-直接告诉 Agent“更换生图模型为 Sunburst”即可；CLI 用 `--model` 指定完整 ID。不会擅自替换用户指定的模型。以下是网站同款中文对比图，安装包内自带，无需打开英文说明：
-
-![如何选择生图模型](assets/image-model-comparison.png)
+Flare 和 Sunburst 当前暂停。旧命令即使仍传入两款 2.5 模型，也会在请求前统一解析为 Image2，不会产生 2.5 调用。
 
 ## 能力
 
@@ -109,7 +105,7 @@ python scripts/sufy_image2.py batch --prompts-file prompts.txt --image product.p
 
 ```bash
 python scripts/sufy_image2.py canvas --width-cm 120 --height-cm 40 --quality 4K
-python scripts/sufy_image2.py generate --prompt "活动海报，完整保留标题与卖点" --width-cm 120 --height-cm 40 --quality 4K --model SF-gpt-image-2.5-sunburst
+python scripts/sufy_image2.py generate --prompt "活动海报，完整保留标题与卖点" --width-cm 120 --height-cm 40 --quality 4K
 python scripts/sufy_image2.py generate --prompt "活动海报" --resolution 3072x1024
 ```
 
