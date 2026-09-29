@@ -220,7 +220,7 @@ class ProviderContractTests(unittest.TestCase):
         self.assertEqual(request["headers"]["Content-Type"], "application/json")
         payload = json.loads(request["body"])
         self.assertEqual(payload, {
-            "model": "SF-gpt-image-2",
+            "model": "GPT-image-2",
             "prompt": "draw a red circle",
             "size": "1024x1024",
             "output_format": "png",
@@ -245,7 +245,7 @@ class ProviderContractTests(unittest.TestCase):
         content_type = request["headers"]["Content-Type"]
         self.assertRegex(content_type, r"^multipart/form-data; boundary=.+")
         body = request["body"]
-        self.assertIn(b'name="model"\r\n\r\nSF-gpt-image-2\r\n', body)
+        self.assertIn(b'name="model"\r\n\r\nGPT-image-2\r\n', body)
         self.assertIn(b'name="prompt"\r\n\r\nkeep the product', body)
         self.assertIn(b'name="size"\r\n\r\n1024x1536', body)
         self.assertIn(b'name="output_format"\r\n\r\npng', body)
@@ -310,8 +310,8 @@ class ProviderContractTests(unittest.TestCase):
 
     def test_model_catalog_get_can_retry_server_errors(self):
         self.queue_json({"error": {"message": "temporary"}}, status=503)
-        self.queue_json({"data": [{"id": "SF-gpt-image-2.5-flare"}]})
-        self.assertEqual(self.client().list_models(), ["SF-gpt-image-2.5-flare"])
+        self.queue_json({"data": [{"id": "GPT-image-2"}]})
+        self.assertEqual(self.client().list_models(), ["GPT-image-2"])
         self.assertEqual(len(self.state.requests), 2)
 
     def test_edit_network_timeout_is_unknown_and_not_retried(self):
@@ -348,12 +348,12 @@ class ProviderContractTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
-    def test_default_is_image2_for_all_image_commands(self):
+    def test_default_is_gpt_image_2_for_all_image_commands(self):
         for command in ["generate", "edit", "batch"]:
             arguments = [command, "--prompt", "keep title"]
             if command == "edit":
                 arguments.extend(["--image", "reference.png"])
-            self.assertEqual(module.build_parser().parse_args(arguments).model, "SF-gpt-image-2")
+            self.assertEqual(module.build_parser().parse_args(arguments).model, "GPT-image-2")
 
     def test_offline_canvas_and_guide_need_no_key_or_network(self):
         for arguments in [["canvas", "--width-cm", "120", "--height-cm", "40", "--quality", "4K"],
@@ -366,15 +366,15 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(summary["size"], "3840x1280")
                 self.assertEqual(summary["canvas"]["ratio"], "3:1")
             else:
-                self.assertEqual(summary["defaultModel"], "SF-gpt-image-2")
-                self.assertEqual([item["id"] for item in summary["models"]], ["SF-gpt-image-2"])
+                self.assertEqual(summary["defaultModel"], "GPT-image-2")
+                self.assertEqual(len(summary["models"]), 5)
         self.assertEqual(self.state.requests, [])
 
     def test_custom_canvas_reaches_all_commands_and_models(self):
         image_path = self.directory / "reference.png"
         image_path.write_bytes(PNG_BYTES)
         prompt = "保留全部标题与卖点，不改变背景。"
-        for model in ["SF-gpt-image-2.5-flare", "SF-gpt-image-2.5-sunburst", "SF-gpt-image-2"]:
+        for model in ["GPT-image-2", "gpt-image-2.5", "gemini-3.6-flash-imagen-official"]:
             for command in ["generate", "edit", "batch"]:
                 with self.subTest(model=model, command=command):
                     self.queue_image()
@@ -385,18 +385,18 @@ class CliTests(unittest.TestCase):
                     status, stdout, stderr = self.invoke(arguments)
                     self.assertEqual((status, stderr), (0, ""))
                     summary = json.loads(stdout)
-                    self.assertEqual((summary["model"], summary["size"]), ("SF-gpt-image-2", "3072x1024"))
+                    self.assertEqual((summary["model"], summary["size"]), (model, "3072x1024"))
                     self.assertEqual(summary["canvas"]["ratio"], "3:1")
                     request = self.state.requests[-1]
                     if command == "generate":
                         payload = json.loads(request["body"])
-                        self.assertEqual(payload["model"], "SF-gpt-image-2")
+                        self.assertEqual(payload["model"], model)
                         self.assertEqual(payload["size"], "3072x1024")
                         self.assertTrue(payload["prompt"].startswith(prompt))
                         self.assertIn("画布规格：宽120厘米、高40厘米", payload["prompt"])
                     else:
                         body = request["body"].decode("utf-8", errors="replace")
-                        self.assertIn('name="model"\r\n\r\nSF-gpt-image-2\r\n', body)
+                        self.assertIn(f'name="model"\r\n\r\n{model}\r\n', body)
                         self.assertIn('name="size"\r\n\r\n3072x1024\r\n', body)
                         self.assertIn(prompt, body)
                         self.assertIn("画布规格：宽120厘米、高40厘米", body)
@@ -479,6 +479,13 @@ class CliTests(unittest.TestCase):
             with self.assertRaisesRegex(module.SkillError, "API key"):
                 module.resolve_api_key(True)
 
+    def test_saved_key_is_used_when_environment_and_stdin_are_absent(self):
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(module, "load_saved_api_key", return_value="saved-secret"),
+        ):
+            self.assertEqual(module.resolve_api_key(False), "saved-secret")
+
     def test_parser_never_accepts_command_line_api_key(self):
         parser = module.build_parser()
         option_strings = {
@@ -508,7 +515,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(summary["outputs"]), 1)
         self.assertTrue(Path(summary["outputs"][0]["path"]).is_file())
 
-    def test_generate_summary_reports_forced_image2_model(self):
+    def test_generate_summary_reports_selected_model(self):
         self.queue_image()
         arguments = [
             "generate", "--prompt", "draw tea", "--model", "custom-image-model",
@@ -516,7 +523,7 @@ class CliTests(unittest.TestCase):
         ]
         status, stdout, _stderr = self.invoke(arguments)
         self.assertEqual(status, 0)
-        self.assertEqual(json.loads(stdout)["model"], "SF-gpt-image-2")
+        self.assertEqual(json.loads(stdout)["model"], "custom-image-model")
 
     def test_edit_command_accepts_multiple_images(self):
         self.queue_image()
@@ -534,13 +541,13 @@ class CliTests(unittest.TestCase):
         self.assertEqual(self.state.requests[0]["path"], "/v1/images/edits")
 
     def test_models_command_lists_provider_models(self):
-        response = json.dumps({"data": [{"id": "SF-gpt-image-2"}, {"id": "other"}]}).encode()
+        response = json.dumps({"data": [{"id": "GPT-image-2"}, {"id": "other"}]}).encode()
         self.state.responses.append((200, "application/json", response))
         status, stdout, _stderr = self.invoke([
             "models", "--base-url", self.base_url, "--retries", "0",
         ])
         self.assertEqual(status, 0)
-        self.assertEqual(json.loads(stdout)["models"], ["other", "SF-gpt-image-2"])
+        self.assertEqual(json.loads(stdout)["models"], ["GPT-image-2", "other"])
 
     def test_batch_repeats_prompt_with_bounded_concurrency_and_ordered_outputs(self):
         self.queue_image(3)
@@ -574,7 +581,7 @@ class DocumentationTests(unittest.TestCase):
         skill_text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("name: sufy-image2", skill_text)
         self.assertIn("description: Use when", skill_text)
-        self.assertIn("SF-gpt-image-2", skill_text)
+        self.assertIn("GPT-image-2", skill_text)
         self.assertIn("LTS4AI_API_KEY", skill_text)
         self.assertIn("seed", skill_text.lower())
         self.assertRegex(skill_text.lower(), r"render|display")

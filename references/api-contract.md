@@ -1,10 +1,10 @@
-# LTS4AI Image2 API Contract
+# LTS4AI Image Model API Contract
 
 ## Defaults
 
 - Base URL: `https://api.lts4ai.com/v1`
-- Required model: `SF-gpt-image-2`
-- Flare and Sunburst are temporarily paused; legacy selections resolve to Image2 before a request is sent
+- Default model: `GPT-image-2`
+- Selectable: `gpt-image-2.5`, `gemini-3.1-pro-imagen-official`, `gemini-3.5-flash-lite-imagen-official`, `gemini-3.6-flash-imagen-official`; preserve exact user selection, never silently fall back
 - Authentication: `Authorization: Bearer <API key>`
 - Output format: PNG
 
@@ -14,14 +14,14 @@
 
 ```json
 {
-  "model": "SF-gpt-image-2",
+  "model": "GPT-image-2",
   "prompt": "A premium studio product photograph",
   "size": "1024x1024",
   "output_format": "png"
 }
 ```
 
-Do not send `n`, `seed`, or `response_format`.
+All catalog models share this contract. Do not send `n`, `seed`, or `response_format`.
 
 ## Multi-reference Editing
 
@@ -29,7 +29,7 @@ Do not send `n`, `seed`, or `response_format`.
 
 | Field | Value |
 |---|---|
-| `model` | `SF-gpt-image-2` |
+| `model` | Selected exact model ID, default `GPT-image-2` |
 | `prompt` | User prompt |
 | `size` | Resolved provider size |
 | `output_format` | `png` |
@@ -67,9 +67,9 @@ For 4K:
 
 For edits, Adaptive first infers the nearest listed ratio from the first reference image.
 
-## Custom canvas
+## Custom canvas (all catalog models)
 
-Image2 keeps the existing custom-size support. `--width-cm` / `--height-cm` compute an exact reduced aspect ratio, choose integer multiples of 16 pixels on both axes, and apply:
+The same custom-size support applies to every model in the catalog. `--width-cm` / `--height-cm` compute an exact reduced aspect ratio, choose integer multiples of 16 pixels on both axes, and apply:
 
 - Aspect ratio from 1:3 to 3:1 inclusive.
 - Longest side <=3840; area from 655360 to 8294400 pixels inclusive.

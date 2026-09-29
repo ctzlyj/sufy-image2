@@ -2,15 +2,19 @@
 
 把 `image.ctikki.com` 使用的 LTS4AI 生图能力封装成可安装的 Agent Skill。安装后，用户只需向 Agent 提供自己的 LTS4AI API Key，再用自然语言描述想生成或修改的图片。
 
-> Skill 名称继续保留 SUFY Image2；当前所有生图统一使用 `SF-gpt-image-2`，Flare 和 Sunburst 暂停，等待所有者明确通知后再恢复。默认接口为 `https://api.lts4ai.com/v1`。
+> Skill 名称继续保留 SUFY Image2；默认模型更新为 `GPT-image-2`，可选 `gpt-image-2.5` 和官方 Imagen 通道模型。默认接口为 `https://api.lts4ai.com/v1`。
 
-## 当前模型状态
+## 如何选择生图模型
 
 | 模型 | 建议用途 | 完整模型 ID |
 |---|---|---|
-| Image2（当前统一模型） | 所有生图、编辑、批量和自定义尺寸任务 | `SF-gpt-image-2` |
+| GPT-image-2（默认） | 日常商品图、批量出图、多参考图编辑 | `GPT-image-2` |
+| gpt-image-2.5 | 同代直连 ID，需要时显式指定 | `gpt-image-2.5` |
+| Imagen Pro（官方通道） | 可选官方 Imagen 模型，按张计费 | `gemini-3.1-pro-imagen-official` |
+| Imagen Flash Lite（官方通道） | 可选官方 Imagen 模型，按张计费 | `gemini-3.5-flash-lite-imagen-official` |
+| Imagen Flash（官方通道） | 可选官方 Imagen 模型，按张计费 | `gemini-3.6-flash-imagen-official` |
 
-Flare 和 Sunburst 当前暂停。旧命令即使仍传入两款 2.5 模型，也会在请求前统一解析为 Image2，不会产生 2.5 调用。
+直接告诉 Agent“更换生图模型为 gpt-image-2.5”即可；CLI 用 `--model` 指定完整 ID。不会擅自替换用户指定的模型。实际可用模型以用户 Key 的 `models` 命令结果为准。
 
 ## 能力
 
@@ -105,20 +109,20 @@ python scripts/sufy_image2.py batch --prompts-file prompts.txt --image product.p
 
 ```bash
 python scripts/sufy_image2.py canvas --width-cm 120 --height-cm 40 --quality 4K
-python scripts/sufy_image2.py generate --prompt "活动海报，完整保留标题与卖点" --width-cm 120 --height-cm 40 --quality 4K
+python scripts/sufy_image2.py generate --prompt "活动海报，完整保留标题与卖点" --width-cm 120 --height-cm 40 --quality 4K --model gpt-image-2.5
 python scripts/sufy_image2.py generate --prompt "活动海报" --resolution 3072x1024
 ```
 
 第一条只计算尺寸，不生图。120×40 厘米在 4K 档会请求 3840×1280 像素；29.7×21 厘米会请求 3168×2240 像素。并非只支持这些尺寸。
 
-- 三种模型使用相同范围：宽高比 1:3～3:1，两边为 16 的倍数，最长边不超过 3840，总像素 655,360～8,294,400。
+- 目录内模型使用相同范围：宽高比 1:3～3:1，两边为 16 的倍数，最长边不超过 3840，总像素 655,360～8,294,400。
 - 厘米宽高必须能精确换算；无法精确表示会明确报错，不近似比例、不裁切或补边。支持最多 6 位小数；不要把商品自身尺寸当作海报尺寸。
 - `--width-cm` 与 `--height-cm` 必须成对使用，且不能和 `--ratio` / `--resolution` 混用。`edit`、`batch` 同样支持。
 - 厘米用于确定画布比例，不代表原生印刷 DPI。结果 JSON 同时包含请求尺寸及能读取到的实际图片宽高；交付前实际预览小字与商品，不用 Mock 测试代替视觉验收。
 
 - 参考图仅支持 JPEG、PNG、GIF、WebP，最多 12 张，原图合计不超过 15 MB。
 - 单批最多 10 个任务，建议并发 1–3。
-- 当前站点界面的 seed 不会传给 `SF-gpt-image-2`，因此本 Skill 不承诺固定 seed 复现。
+- 当前站点界面的 seed 不会传给 `GPT-image-2`，因此本 Skill 不承诺固定 seed 复现。
 - 4K 请求可能需要最长约 30 分钟。
 - 生图超时、连接中断或 HTTP 408/409/5xx 时结果可能已生成并计费，脚本不会自动重发。先核对服务端记录；批量部分失败时保留已保存图片，不整批重跑。
 

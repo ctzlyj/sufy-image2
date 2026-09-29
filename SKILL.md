@@ -1,16 +1,18 @@
 ---
 name: sufy-image2
-description: Use when a user wants to generate, redraw, edit, restyle, or batch-create images with an LTS4AI API key using SF-gpt-image-2, including Image Studio 商品套图, 服装工作台, multi-reference editing, custom centimeter poster sizes, and 1K/2K/4K output.
+description: Use when a user wants to generate, redraw, edit, restyle, or batch-create images with an LTS4AI API key using GPT-image-2, gpt-image-2.5, or the official Imagen models, including Image Studio 商品套图, 服装工作台, multi-reference editing, custom centimeter poster sizes, and 1K/2K/4K output.
 ---
 
 # SUFY Image2
 
-Use the bundled standard-library Python client with the image-model contracts used by `image.ctikki.com`. Until the owner explicitly re-enables the 2.5 models, send every image request with `SF-gpt-image-2`. Legacy `--model SF-gpt-image-2.5-flare` and `--model SF-gpt-image-2.5-sunburst` inputs are accepted only for compatibility and are resolved to Image2 before any request.
+Use the bundled standard-library Python client with the image-model contracts used by `image.ctikki.com`. Default to `GPT-image-2`; retain the user's explicitly selected model, including `gpt-image-2.5` and the official Imagen models (`gemini-3.1-pro-imagen-official`, `gemini-3.5-flash-lite-imagen-official`, `gemini-3.6-flash-imagen-official`). The retired `SF-gpt-image-2` maps to `GPT-image-2` on the site. Do not silently fall back when a model is unavailable.
 
-## 当前模型策略
+## 更换生图模型 / 如何选择生图模型
 
-- **Image2（当前统一模型）**：所有文生图、参考图编辑、批量任务和自定义尺寸任务均使用 `SF-gpt-image-2`。
-- **Flare / Sunburst**：暂时停用，不推荐、不主动选择，也不向上游发送这两个模型 ID；等待所有者明确通知后再恢复。
+- **GPT-image-2（默认）**：日常商品图、批量出图和多参考图编辑；沿用原 Image2 的接口与 token 计费。
+- **gpt-image-2.5**：同代直连模型 ID，需要时显式指定。
+- **官方 Imagen 通道**：`gemini-3.1-pro-imagen-official`、`gemini-3.5-flash-lite-imagen-official`、`gemini-3.6-flash-imagen-official`，按张计费。
+- 用户问如何选择时，运行 `python scripts/sufy_image2.py guide`，用中文解释当前目录；不要让用户访问英文官方说明或外部链接。建议不是速度、价格或质量保证，实际可用模型以用户 Key 的 `models` 结果为准。
 
 ## Workflow
 
@@ -19,8 +21,8 @@ Use the bundled standard-library Python client with the image-model contracts us
    - one to twelve reference images → `edit`
    - several outputs or one prompt per line → `batch`
    - 商品套图或服装工作台任务 → 先阅读 `references/image-studio-workflows.md`，再按其中的角色分工、参考图顺序和保真约束组织提示词
-2. Ask once for the LTS4AI API key only when the user has not supplied it.
-3. Keep the key ephemeral. Prefer a process-local `LTS4AI_API_KEY`; otherwise start the CLI with `--api-key-stdin` and send the key through stdin without shell echo.
+2. On the user's own Windows machine, reuse the current-user DPAPI credential at `%LOCALAPPDATA%\JoyCode\credentials\sufy-image2.dpapi` when present. It is encrypted for that Windows identity and must never be copied to another account or machine.
+3. Otherwise ask once for the LTS4AI API key. Keep transient keys process-local with `LTS4AI_API_KEY` or `--api-key-stdin`; never put a key in command arguments, source, logs, replies, or plaintext files.
 4. Infer missing creative details from the request. Default to ratio `1:1`, quality `2K`, and output directory `output/`. For a specified poster/canvas size, use `--width-cm` and `--height-cm`; read `references/api-contract.md` for exact limits. Distinguish canvas dimensions from product/package dimensions, and resolve conflicting sizes before a paid call.
 5. Run the command from this Skill's directory.
 6. Read the JSON summary from stdout. Render or display each generated local image when the host supports images; otherwise provide its absolute path.
@@ -48,10 +50,10 @@ Add `--api-key-stdin` after the subcommand when using stdin. Never put the key i
 
 ```bash
 python scripts/sufy_image2.py canvas --width-cm 120 --height-cm 40 --quality 4K
-python scripts/sufy_image2.py generate --prompt "海报设计，保留全部指定标题与卖点" --width-cm 120 --height-cm 40 --quality 4K
+python scripts/sufy_image2.py generate --prompt "海报设计，保留全部指定标题与卖点" --width-cm 120 --height-cm 40 --quality 4K --model gpt-image-2.5
 ```
 
-`canvas` is offline and free; the second command generates a paid image. Width/height set the exact aspect ratio, not native print resolution or DPI. Report requested `size` separately from each output's measured `width`/`height`; inspect actual output rather than claiming a 120 cm print is natively 300 DPI. Image2 keeps the existing custom-size limits; 120×40 is only an example.
+`canvas` is offline and free; the second command generates a paid image. Width/height set the exact aspect ratio, not native print resolution or DPI. Report requested `size` separately from each output's measured `width`/`height`; inspect actual output rather than claiming a 120 cm print is natively 300 DPI. All catalog models use the same custom-size limits, not just the 120×40 example.
 
 ## Operating Rules
 

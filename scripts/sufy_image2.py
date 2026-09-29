@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Portable LTS4AI SF-gpt-image client."""
+"""Portable LTS4AI image-model client."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import math
 import os
 import re
 import struct
+import subprocess
 import sys
 import time
 import urllib.error
@@ -26,9 +27,13 @@ from typing import Any, Callable
 
 
 DEFAULT_BASE_URL = "https://api.lts4ai.com/v1"
-DEFAULT_MODEL = "SF-gpt-image-2"
+DEFAULT_MODEL = "GPT-image-2"
 MODEL_GUIDE = [
-    {"id": DEFAULT_MODEL, "label": "Image2（当前统一模型）", "description": "Flare 和 Sunburst 暂停期间，所有生图统一使用 Image2。"},
+    {"id": DEFAULT_MODEL, "label": "GPT-image-2（默认）", "description": "日常商品图、批量出图和多参考图编辑；沿用原 Image2 的接口与 token 计费。"},
+    {"id": "gpt-image-2.5", "label": "gpt-image-2.5", "description": "同代直连模型 ID，需要时显式指定。"},
+    {"id": "gemini-3.1-pro-imagen-official", "label": "Imagen Pro（官方通道）", "description": "可选官方 Imagen 模型，按张计费。"},
+    {"id": "gemini-3.5-flash-lite-imagen-official", "label": "Imagen Flash Lite（官方通道）", "description": "可选官方 Imagen 模型，按张计费。"},
+    {"id": "gemini-3.6-flash-imagen-official", "label": "Imagen Flash（官方通道）", "description": "可选官方 Imagen 模型，按张计费。"},
 ]
 MIN_CANVAS_PIXELS = 655_360
 MAX_CANVAS_PIXELS = 8_294_400
@@ -36,6 +41,7 @@ MAX_CANVAS_SIDE = 3840
 UNKNOWN_RESULT = "Result unknown; check task/billing status before resubmitting to avoid duplicate charges."
 MAX_REFERENCE_IMAGES = 12
 MAX_REFERENCE_BYTES = 15 * 1024 * 1024
+SAVED_CREDENTIAL_RELATIVE_PATH = Path("JoyCode") / "credentials" / "sufy-image2.dpapi"
 
 SUPPORTED_MIME_TYPES = {
     ".jpg": "image/jpeg",
@@ -307,7 +313,7 @@ class SfImage2Client:
             raise SkillError("Retries cannot be negative.")
         self.api_key = trimmed_key
         self.api_root = normalize_api_root(base_url)
-        self.model = DEFAULT_MODEL
+        self.model = model.strip() or DEFAULT_MODEL
         self.timeout = timeout
         self.retries = retries
         self.sleep = sleep
@@ -656,6 +662,41 @@ def _safe_network_reason(error: BaseException) -> str:
     return error.__class__.__name__
 
 
+def load_saved_api_key() -> str:
+    if os.name != "nt":
+        return ""
+    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+    if not local_app_data:
+        return ""
+    credential_path = Path(local_app_data) / SAVED_CREDENTIAL_RELATIVE_PATH
+    helper = Path(__file__).resolve().with_name("read_dpapi_credential.ps1")
+    if not credential_path.is_file() or not helper.is_file():
+        return ""
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        completed = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy", "Bypass",
+                "-File", str(helper),
+                "-CredentialPath", str(credential_path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            creationflags=creation_flags,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if completed.returncode != 0:
+        return ""
+    return completed.stdout.strip()
+
+
 def resolve_api_key(read_stdin: bool) -> str:
     environment_key = os.environ.get("LTS4AI_API_KEY", "").strip()
     if environment_key:
@@ -665,19 +706,22 @@ def resolve_api_key(read_stdin: bool) -> str:
         if stdin_key:
             return stdin_key
         raise SkillError("LTS4AI API key from stdin was empty.")
+    saved_key = load_saved_api_key()
+    if saved_key:
+        return saved_key
     if sys.stdin.isatty():
         interactive_key = getpass.getpass("LTS4AI API key: ").strip()
         if interactive_key:
             return interactive_key
     raise SkillError(
-        "LTS4AI API key is required. Set LTS4AI_API_KEY or use --api-key-stdin."
+        "LTS4AI API key is required. Configure the Windows DPAPI credential, set LTS4AI_API_KEY, or use --api-key-stdin."
     )
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sufy_image2.py",
-        description="Generate and edit images with LTS4AI Image2.",
+    description="Generate and edit images with LTS4AI GPT-image-2, gpt-image-2.5, or official Imagen models.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
