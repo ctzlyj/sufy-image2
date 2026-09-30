@@ -7,7 +7,7 @@
 把下面这句话发送给你的 Agent：
 
 ```text
-请安装这个 Skill：https://github.com/CTctikki/sufy-image2
+请安装这个 Skill：https://github.com/ctzlyj/sufy-image2
 ```
 
 如果你的 Agent 需要手动安装，请把仓库下载或克隆到它的 Skills 目录，并确保 `SKILL.md` 位于 Skill 根目录。

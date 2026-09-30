@@ -37,13 +37,13 @@
 最简单的方式：把仓库地址发给支持 Agent Skills 的 Agent，并说：
 
 ```text
-请安装这个 Skill：https://github.com/CTctikki/sufy-image2
+请安装这个 Skill：https://github.com/ctzlyj/sufy-image2
 ```
 
 手动安装时，把仓库克隆到 Agent 的 Skills 目录。例如 Codex：
 
 ```bash
-git clone https://github.com/CTctikki/sufy-image2 ~/.codex/skills/sufy-image2
+git clone https://github.com/ctzlyj/sufy-image2 ~/.codex/skills/sufy-image2
 ```
 
 其他 Agent 请复制到其兼容的 Skills 目录，确保 `SKILL.md` 位于 Skill 根目录。
