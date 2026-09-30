@@ -31,7 +31,9 @@ Then send the key as one stdin line through the Agent's process-input tool. The 
 | 如何选择生图模型 | `guide` (offline; explain the returned catalog in Chinese) |
 | Check poster dimensions before paying | `canvas --width-cm W --height-cm H --quality 4K` (offline) |
 
-Default to `GPT-image-2`; use `--model gpt-image-2.5` for the direct same-generation ID, or the exact official Imagen model ID when the user selects one. Exact user selection takes precedence over recommendations. Authentication or availability failures do not permit automatic fallback.
+Default to `gpt-image-2.5`, the new direct model ID forwarded through the LTS4AI image channel's NextAICore adapter. Use `--model GPT-image-2` only when the user explicitly requests that compatibility alias, or the exact official Imagen model ID when the user selects one. Exact user selection takes precedence over recommendations. Authentication or availability failures do not permit automatic fallback.
+
+Compose all image copy—titles, selling points, evidence labels, and scene text—directly as the Agent. Do not call DeepSeek or any other text/chat model for this work. Use only user-provided facts and explicitly permitted creative direction; do not invent certifications, parameters, specifications, or comparison claims.
 
 For poster sizes, extract the intended canvas dimensions from the request, not product/package dimensions. Resolve conflicting dimensions rather than guessing. Use centimeter options on `generate`, `edit`, or `batch`; do not combine them with `--ratio` or `--resolution`. `canvas` and `guide` require no API key and make no network calls.
 

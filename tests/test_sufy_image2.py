@@ -220,7 +220,7 @@ class ProviderContractTests(unittest.TestCase):
         self.assertEqual(request["headers"]["Content-Type"], "application/json")
         payload = json.loads(request["body"])
         self.assertEqual(payload, {
-            "model": "GPT-image-2",
+            "model": "gpt-image-2.5",
             "prompt": "draw a red circle",
             "size": "1024x1024",
             "output_format": "png",
@@ -245,7 +245,7 @@ class ProviderContractTests(unittest.TestCase):
         content_type = request["headers"]["Content-Type"]
         self.assertRegex(content_type, r"^multipart/form-data; boundary=.+")
         body = request["body"]
-        self.assertIn(b'name="model"\r\n\r\nGPT-image-2\r\n', body)
+        self.assertIn(b'name="model"\r\n\r\ngpt-image-2.5\r\n', body)
         self.assertIn(b'name="prompt"\r\n\r\nkeep the product', body)
         self.assertIn(b'name="size"\r\n\r\n1024x1536', body)
         self.assertIn(b'name="output_format"\r\n\r\npng', body)
@@ -348,12 +348,12 @@ class ProviderContractTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
-    def test_default_is_gpt_image_2_for_all_image_commands(self):
+    def test_default_is_gpt_image_2_5_for_all_image_commands(self):
         for command in ["generate", "edit", "batch"]:
             arguments = [command, "--prompt", "keep title"]
             if command == "edit":
                 arguments.extend(["--image", "reference.png"])
-            self.assertEqual(module.build_parser().parse_args(arguments).model, "GPT-image-2")
+            self.assertEqual(module.build_parser().parse_args(arguments).model, "gpt-image-2.5")
 
     def test_offline_canvas_and_guide_need_no_key_or_network(self):
         for arguments in [["canvas", "--width-cm", "120", "--height-cm", "40", "--quality", "4K"],
@@ -366,7 +366,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(summary["size"], "3840x1280")
                 self.assertEqual(summary["canvas"]["ratio"], "3:1")
             else:
-                self.assertEqual(summary["defaultModel"], "GPT-image-2")
+                self.assertEqual(summary["defaultModel"], "gpt-image-2.5")
                 self.assertEqual(len(summary["models"]), 5)
         self.assertEqual(self.state.requests, [])
 
@@ -581,7 +581,8 @@ class DocumentationTests(unittest.TestCase):
         skill_text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("name: sufy-image2", skill_text)
         self.assertIn("description: Use when", skill_text)
-        self.assertIn("GPT-image-2", skill_text)
+        self.assertIn("gpt-image-2.5", skill_text)
+        self.assertIn("do not call a separate text/chat model", skill_text)
         self.assertIn("LTS4AI_API_KEY", skill_text)
         self.assertIn("seed", skill_text.lower())
         self.assertRegex(skill_text.lower(), r"render|display")
@@ -598,6 +599,7 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("服装工作台", skill_text)
         self.assertIn("商品套图", readme)
         self.assertIn("服装工作台", readme)
+        self.assertIn("不调用任何文本/聊天模型", readme)
         self.assertGreater(len(workflow.strip()), 1000)
 
     def test_references_document_exact_contract_and_key_safety(self):

@@ -3,8 +3,8 @@
 ## Defaults
 
 - Base URL: `https://api.lts4ai.com/v1`
-- Default model: `GPT-image-2`
-- Selectable: `gpt-image-2.5`, `gemini-3.1-pro-imagen-official`, `gemini-3.5-flash-lite-imagen-official`, `gemini-3.6-flash-imagen-official`; preserve exact user selection, never silently fall back
+- Default model: `gpt-image-2.5` (new direct ID; the LTS4AI image channel forwards it through the NextAICore adapter)
+- Selectable: `GPT-image-2` compatibility alias, `gemini-3.1-pro-imagen-official`, `gemini-3.5-flash-lite-imagen-official`, `gemini-3.6-flash-imagen-official`; preserve exact user selection, never silently fall back
 - Authentication: `Authorization: Bearer <API key>`
 - Output format: PNG
 
@@ -14,7 +14,7 @@
 
 ```json
 {
-  "model": "GPT-image-2",
+  "model": "gpt-image-2.5",
   "prompt": "A premium studio product photograph",
   "size": "1024x1024",
   "output_format": "png"
@@ -29,7 +29,7 @@ All catalog models share this contract. Do not send `n`, `seed`, or `response_fo
 
 | Field | Value |
 |---|---|
-| `model` | Selected exact model ID, default `GPT-image-2` |
+| `model` | Selected exact model ID, default `gpt-image-2.5` |
 | `prompt` | User prompt |
 | `size` | Resolved provider size |
 | `output_format` | `png` |

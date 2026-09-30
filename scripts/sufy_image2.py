@@ -27,10 +27,10 @@ from typing import Any, Callable
 
 
 DEFAULT_BASE_URL = "https://api.lts4ai.com/v1"
-DEFAULT_MODEL = "GPT-image-2"
+DEFAULT_MODEL = "gpt-image-2.5"
 MODEL_GUIDE = [
-    {"id": DEFAULT_MODEL, "label": "GPT-image-2（默认）", "description": "日常商品图、批量出图和多参考图编辑；沿用原 Image2 的接口与 token 计费。"},
-    {"id": "gpt-image-2.5", "label": "gpt-image-2.5", "description": "同代直连模型 ID，需要时显式指定。"},
+    {"id": DEFAULT_MODEL, "label": "gpt-image-2.5（默认）", "description": "新链路直连模型 ID；LTS4AI 生图渠道经 NextAICore 适配层转发，按张计费。"},
+    {"id": "GPT-image-2", "label": "GPT-image-2（兼容别名）", "description": "站点兼容入口，上游同样映射到 gpt-image-2.5；仅在用户明确要求时使用。"},
     {"id": "gemini-3.1-pro-imagen-official", "label": "Imagen Pro（官方通道）", "description": "可选官方 Imagen 模型，按张计费。"},
     {"id": "gemini-3.5-flash-lite-imagen-official", "label": "Imagen Flash Lite（官方通道）", "description": "可选官方 Imagen 模型，按张计费。"},
     {"id": "gemini-3.6-flash-imagen-official", "label": "Imagen Flash（官方通道）", "description": "可选官方 Imagen 模型，按张计费。"},
@@ -721,7 +721,7 @@ def resolve_api_key(read_stdin: bool) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sufy_image2.py",
-    description="Generate and edit images with LTS4AI GPT-image-2, gpt-image-2.5, or official Imagen models.",
+        description="Generate and edit images with LTS4AI gpt-image-2.5, the GPT-image-2 compatibility alias, or official Imagen models.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
